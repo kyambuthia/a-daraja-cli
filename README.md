@@ -1,8 +1,8 @@
-# a-better-daraja
+# pesaraja
 
-> Daraja ni ngumu. Hii sio.
+> Daraja ni ngumu. Hii sio. Pesa raja.
 
-Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broken one. This is a better one.
+Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broken one. This is the money bridge.
 
 ## The problem
 
@@ -39,8 +39,8 @@ That's it. One command. The CLI handles OAuth tokens, password generation, expir
 
 ```bash
 # Coming soon
-git clone https://github.com/kyambuthia/a-better-daraja
-cd a-better-daraja
+git clone https://github.com/kyambuthia/pesaraja
+cd pesaraja
 ./install.sh
 ```
 

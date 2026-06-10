@@ -16,9 +16,9 @@ Every target follows the same path. Two steps to a payment:
 **Step 1: `mpesa init` (do this once)**
 
 ```bash
-$ curl -fsSL https://get.daraja.dev | bash   # install the CLI
+$ curl -fsSL https://get.pesaraja.dev | bash   # install the CLI
 $ mpesa init                                  # enter your Daraja credentials once
-  → Generates encrypted ~/.config/daraja/credentials.enc
+  → Generates encrypted ~/.config/pesaraja/credentials.enc
   → Prints your SDK key: dsk_test_WEFWEFpj23n...==
 ```
 
@@ -26,11 +26,11 @@ $ mpesa init                                  # enter your Daraja credentials on
 
 | Language | Install | Import |
 |----------|---------|--------|
-| **Rust** | `cargo add daraja` | `use daraja::Daraja;` |
-| **TypeScript** | `npm install @daraja/sdk` | `import { Daraja } from "@daraja/sdk"` |
-| **Python** | `pip install daraja` | `from daraja import Daraja` |
-| **PHP** | `composer require daraja/daraja` | `use Daraja\\Daraja;` |
-| **Dart** | `dart pub add daraja` | `import 'package:daraja/daraja.dart';` |
+| **Rust** | `cargo add pesaraja` | `use pesaraja::Daraja;` |
+| **TypeScript** | `npm install @pesaraja/sdk` | `import { Daraja } from "@pesaraja/sdk"` |
+| **Python** | `pip install pesaraja` | `from pesaraja import Daraja` |
+| **PHP** | `composer require pesaraja/pesaraja` | `use Pesaraja\\Daraja;` |
+| **Dart** | `dart pub add pesaraja` | `import 'package:pesaraja/daraja.dart';` |
 
 Then in your `.env`:
 
@@ -40,31 +40,31 @@ DARAJA_KEY=dsk_test_WEFWEFpj23nkj23bJgFw==
 
 ```rust
 // Rust
-let d = Daraja::from_env()?;
+let d = Pesaraja::from_env()?;
 d.stk_push(phone: "254712345678", amount: 500, description: "Moringa seedlings").await?;
 ```
 
 ```typescript
 // TypeScript  
-const d = Daraja.fromEnv();
+const d = Pesaraja.fromEnv();
 await d.stkPush({ phone: "254712345678", amount: 500, description: "Moringa seedlings" });
 ```
 
 ```python
 # Python
-d = Daraja.from_env()
+d = Pesaraja.from_env()
 d.stk_push(phone="254712345678", amount=500, description="Moringa seedlings")
 ```
 
 ```php
 // PHP
-$d = Daraja::fromEnv();
+$d = Pesaraja::fromEnv();
 $d->stkPush(phone: "254712345678", amount: 500, description: "Moringa seedlings");
 ```
 
 ```dart
 // Dart
-final d = Daraja.fromEnv();
+final d = Pesaraja.fromEnv();
 await d.stkPush(phone: "254712345678", amount: 500, description: "Moringa seedlings");
 ```
 
@@ -84,13 +84,13 @@ Same key, same API shape, same credentials file. The CLI bootstraps everything. 
 Monorepo layout:
 
 ```
-a-better-daraja/
+pesaraja/
 ├── cli/              # Rust binary — universal entry point
 ├── daraja-rs/        # Rust library crate
-├── daraja-ts/        # npm: @daraja/sdk
-├── daraja-php/       # composer: daraja/daraja
-├── daraja-py/        # pip: daraja
-├── daraja-dart/      # pub.dev: daraja
+├── daraja-ts/        # npm: @pesaraja/sdk
+├── daraja-php/       # composer: pesaraja/pesaraja
+├── daraja-py/        # pip: pesaraja
+├── daraja-dart/      # pub.dev: pesaraja
 ├── ARCHITECTURE.md
 ├── API.md
 └── README.md
