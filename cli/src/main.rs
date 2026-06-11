@@ -25,6 +25,8 @@ const DEFAULT_CALLBACK: &str = "https://example.com/callback";
 const DEFAULT_RESULT_URL: &str = "https://example.com/result";
 const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
 
+mod init;
+
 #[derive(Parser)]
 #[command(
     name = "pesaraja",
