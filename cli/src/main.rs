@@ -22,7 +22,7 @@ const DEFAULT_TIMEOUT_URL: &str = "http://localhost:8181/timeout";
 
 #[derive(Parser)]
 #[command(
-    name = "mpesa",
+    name = "pesaraja",
     version,
     about = "M-Pesa payments via Safaricom Daraja — zero ceremony",
     long_about = None
@@ -63,7 +63,7 @@ enum Commands {
     },
     /// Show current configuration (never exposes secrets)
     Config,
-    /// Print the SDK key for shell export: export DARAJA_KEY=$(mpesa export-key)
+    /// Print the SDK key for shell export: export DARAJA_KEY=$(pesaraja export-key)
     ExportKey,
     /// STK Push — Lipa Na M-Pesa Online
     Stk {
@@ -397,13 +397,13 @@ fn load_sdk_key() -> Result<String, DarajaError> {
         .map(|s| s.trim().to_string())
         .map_err(|_| {
             DarajaError::Config(format!(
-                "No DARAJA_KEY set and no key file at {}. Run `mpesa init` first.",
+                "No DARAJA_KEY set and no key file at {}. Run `pesaraja init` first.",
                 path.display()
             ))
         })?;
     if key.is_empty() {
         return Err(DarajaError::Config(format!(
-            "Key file at {} is empty. Run `mpesa init` first.",
+            "Key file at {} is empty. Run `pesaraja init` first.",
             path.display()
         )));
     }
@@ -768,12 +768,12 @@ fn print_init_success(env_label: &str, sdk_key: &str) -> Result<(), DarajaError>
     println!();
     println!("    {sdk_key}");
     println!();
-    println!("  The key is auto-loaded by all mpesa commands. No env var needed.");
+    println!("  The key is auto-loaded by all pesaraja commands. No env var needed.");
     println!("  For CI/CD or Docker, set DARAJA_KEY=\"{sdk_key}\"");
     println!();
     if env_label == "sandbox" {
         println!("  Add production credentials later with:");
-        println!("    mpesa init --env production");
+        println!("    pesaraja init --env production");
     }
     println!();
     Ok(())
@@ -933,7 +933,7 @@ async fn cmd_stk(
                 ));
             }
             println!("  Using local callback URL: {DEFAULT_CALLBACK}");
-            println!("  Run `mpesa listen` or expose via ngrok for real callbacks.");
+            println!("  Run `pesaraja listen` or expose via ngrok for real callbacks.");
             println!();
             DEFAULT_CALLBACK.to_string()
         }
@@ -1152,7 +1152,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
         hint: if creds_exist {
             None
         } else {
-            Some("Run `mpesa init` to set up.".to_string())
+            Some("Run `pesaraja init` to set up.".to_string())
         },
     });
 
@@ -1174,7 +1174,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
         hint: if key_set {
             None
         } else {
-            Some("Run `mpesa init` to set up.".to_string())
+            Some("Run `pesaraja init` to set up.".to_string())
         },
     });
 
@@ -1192,7 +1192,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
             checks.push(CheckItem {
                 ok: false,
                 message: "SDK key has an invalid prefix (expected dsk_test_ or dsk_live_)".into(),
-                hint: Some("Re-run `mpesa init` to generate a valid key.".into()),
+                hint: Some("Re-run `pesaraja init` to generate a valid key.".into()),
             });
         } else if creds_exist {
             match config::extract_key_from_sdk_key(key) {
@@ -1232,7 +1232,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
                                         ok: false,
                                         message: format!("{env_name} OAuth failed: {err}"),
                                         hint: Some(
-                                            "Check your consumer key and secret in `mpesa init`."
+                                            "Check your consumer key and secret in `pesaraja init`."
                                                 .into(),
                                         ),
                                     });
@@ -1253,7 +1253,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
                                     message: "Initiator credentials not configured".into(),
                                     hint: Some(
                                         "Required for B2C, status, balance, and reversal. \
-                                         Re-run `mpesa init` and add initiator details."
+                                         Re-run `pesaraja init` and add initiator details."
                                             .into(),
                                     ),
                                 });
@@ -1305,7 +1305,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
         checks.push(CheckItem {
             ok: false,
             message: "Production credentials not configured".into(),
-            hint: Some("Run `mpesa init --env production` to set up.".into()),
+            hint: Some("Run `pesaraja init --env production` to set up.".into()),
         });
     } else if is_production {
         checks.push(CheckItem {
