@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use zeroize::Zeroizing;
 
-const DEFAULT_CALLBACK: &str = "http://localhost:8181/callback";
-const DEFAULT_RESULT_URL: &str = "http://localhost:8181/result";
-const DEFAULT_TIMEOUT_URL: &str = "http://localhost:8181/timeout";
+const DEFAULT_CALLBACK: &str = "https://example.com/callback";
+const DEFAULT_RESULT_URL: &str = "https://example.com/result";
+const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
 
 #[derive(Parser)]
 #[command(
@@ -176,10 +176,11 @@ enum Commands {
         #[arg(long, default_value = "Completed")]
         response_type: String,
         /// Confirmation URL
-        #[arg(long, default_value = "http://localhost:8181/c2b/confirm")]
-        confirmation_url: String,
-        /// Validation URL
-        #[arg(long, default_value = "http://localhost:8181/c2b/validate")]
+        #[arg(long, default_value = "https://example.com/c2b/confirm")]
+        confirm_url: String,
+
+        /// Validation URL (receives C2B validation callbacks)
+        #[arg(long, default_value = "https://example.com/c2b/validate")]
         validation_url: String,
     },
     /// Production readiness check
@@ -528,13 +529,13 @@ async fn run() -> Result<(), DarajaError> {
         Commands::Register {
             shortcode,
             response_type,
-            confirmation_url,
+            confirm_url,
             validation_url,
         } => {
             cmd_register(
                 shortcode,
                 response_type,
-                confirmation_url,
+                confirm_url,
                 validation_url,
             )
             .await
@@ -660,6 +661,13 @@ fn prompt_credentials_interactive(
         Password::with_theme(&theme())
             .with_prompt("Passkey (Enter to keep existing)")
             .allow_empty_password(true)
+            .interact()
+            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
+    } else if env_label == "sandbox" {
+        let default_pk = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
+        println!("  ℹ Sandbox passkey is public: {}", &default_pk[..16]);
+        Password::with_theme(&theme())
+            .with_prompt("Passkey (paste the sandbox passkey)")
             .interact()
             .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
     } else {
@@ -932,9 +940,7 @@ async fn cmd_stk(
                     "callback URL is required for production — pass --callback-url".into(),
                 ));
             }
-            println!("  Using local callback URL: {DEFAULT_CALLBACK}");
-            println!("  Run `pesaraja listen` or expose via ngrok for real callbacks.");
-            println!();
+            println!("  Using sandbox callback URL: {DEFAULT_CALLBACK}");
             DEFAULT_CALLBACK.to_string()
         }
     };
@@ -1092,7 +1098,7 @@ async fn cmd_reverse(
 async fn cmd_register(
     shortcode: Option<String>,
     response_type: String,
-    confirmation_url: String,
+    confirm_url: String,
     validation_url: String,
 ) -> Result<(), DarajaError> {
     let daraja = load_daraja().await?;
@@ -1105,7 +1111,7 @@ async fn cmd_register(
         daraja.client(),
         &shortcode,
         &response_type,
-        &confirmation_url,
+        &confirm_url,
         &validation_url,
     )
     .await?;
@@ -1317,7 +1323,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
 
     checks.push(CheckItem {
         ok: true,
-        message: format!("Default callback URL: {DEFAULT_CALLBACK} (local dev)"),
+        message: format!("Default callback URL: {DEFAULT_CALLBACK} (sandbox placeholder)"),
         hint: Some(
             "For production, expose a public HTTPS endpoint (e.g. ngrok) and pass --callback-url."
                 .into(),
