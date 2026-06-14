@@ -24,7 +24,9 @@ uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 # Time
 chrono = "0.4"
+x509-cert = { version = "0.2.5", features = ["pem"] }
 
 [dev-dependencies]
+rcgen = "0.14.8"
 tokio-test = "0.4"
 wiremock = "0.6"

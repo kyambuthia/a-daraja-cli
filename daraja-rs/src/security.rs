@@ -1,7 +1,63 @@
-// Password generation and timestamp formatting for STK Push.
+// Security credential generation and STK Push password helpers.
 //
-// Daraja requires a base64-encoded password built from:
-//   shortcode + passkey + timestamp (YYYYMMDDHHmmss)
+// B2C / status / balance / reversal APIs require a SecurityCredential:
+// RSA PKCS#1 v1.5 encrypt the initiator password with Safaricom's public
+// certificate, then base64-encode the ciphertext.
+//
+// STK Push uses a different scheme:
+//   base64(shortcode + passkey + timestamp (YYYYMMDDHHmmss))
+
+use crate::error::DarajaError;
+use base64::Engine;
+use rand::rngs::OsRng;
+use rsa::{pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
+use std::convert::TryFrom;
+use x509_cert::{
+    certificate::Certificate,
+    der::{referenced::OwnedToRef, DecodePem},
+};
+
+/// Generate a Daraja SecurityCredential from an initiator password and PEM certificate.
+///
+/// Parses the Safaricom API certificate (sandbox or production), RSA-encrypts
+/// the initiator password with PKCS#1 v1.5, and base64-encodes the ciphertext.
+pub fn generate_security_credential(
+    initiator_password: &str,
+    certificate_pem: &str,
+) -> Result<String, DarajaError> {
+    let public_key = rsa_public_key_from_pem(certificate_pem)?;
+    let mut rng = OsRng;
+    let encrypted = public_key
+        .encrypt(&mut rng, Pkcs1v15Encrypt, initiator_password.as_bytes())
+        .map_err(|e| DarajaError::Encryption(format!("RSA encryption failed: {e}")))?;
+
+    Ok(base64::engine::general_purpose::STANDARD.encode(encrypted))
+}
+
+fn rsa_public_key_from_pem(pem: &str) -> Result<RsaPublicKey, DarajaError> {
+    let pem = pem.trim();
+
+    // Try certificate first
+    if pem.contains("BEGIN CERTIFICATE") {
+        let cert = Certificate::from_pem(pem.as_bytes()).map_err(|e| {
+            DarajaError::Encryption(format!("failed to parse certificate PEM: {e}"))
+        })?;
+        let spki = cert
+            .tbs_certificate
+            .subject_public_key_info
+            .owned_to_ref();
+        return RsaPublicKey::try_from(spki).map_err(|e| {
+            DarajaError::Encryption(format!(
+                "certificate does not contain a valid RSA public key: {e}"
+            ))
+        });
+    }
+
+    // Try raw public key PEM
+    RsaPublicKey::from_public_key_pem(pem).map_err(|e| {
+        DarajaError::Encryption(format!("failed to parse public key PEM: {e}"))
+    })
+}
 
 /// Generate the encrypted password for STK Push requests.
 ///
@@ -202,5 +258,73 @@ mod tests {
         let pw1 = generate_password("a", "b", "c");
         let pw2 = generate_password("a", "b", "c");
         assert_eq!(pw1, pw2, "same inputs must produce same password");
+    }
+
+    // ── generate_security_credential ────────────────────────
+
+    #[test]
+    fn security_credential_from_rsa_public_key_pem() {
+        use rand::rngs::OsRng;
+        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");
+        let public_pem = private_key
+            .to_public_key()
+            .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("public key PEM encoding");
+        let password = "Safaricom999!*!";
+
+        let credential =
+            generate_security_credential(password, &public_pem).expect("credential generation");
+
+        let decoded = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &credential,
+        )
+        .expect("security credential should be valid base64");
+
+        assert!(!decoded.is_empty());
+        assert_ne!(decoded, password.as_bytes());
+    }
+
+    #[test]
+    fn security_credential_round_trips_with_generated_keypair() {
+        use rand::rngs::OsRng;
+        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");
+        let public_pem = private_key
+            .to_public_key()
+            .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("public key PEM encoding");
+        let password = "test-initiator-password";
+
+        let credential =
+            generate_security_credential(password, &public_pem).expect("credential generation");
+
+        let decoded = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &credential,
+        )
+        .expect("security credential should be valid base64");
+
+        let decrypted = private_key
+            .decrypt(Pkcs1v15Encrypt, &decoded)
+            .expect("RSA decryption");
+        assert_eq!(String::from_utf8(decrypted).unwrap(), password);
+    }
+
+    #[test]
+    fn security_credential_rejects_invalid_pem() {
+        let result = generate_security_credential("password", "not a pem");
+        assert!(result.is_err());
+        match result {
+            Err(DarajaError::Encryption(msg)) => {
+                assert!(msg.contains("failed to parse"));
+            }
+            other => panic!("expected Encryption error, got {other:?}"),
+        }
     }
 }

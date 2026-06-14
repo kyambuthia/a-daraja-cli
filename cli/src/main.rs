@@ -1,3 +1,5 @@
+mod listen;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use daraja_rs::api::balance::query_balance;
 use daraja_rs::api::b2c::b2c_payment;
@@ -9,6 +11,7 @@ use daraja_rs::auth::TokenManager;
 use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment};
+use daraja_rs::webhook::C2bConfirmation;
 use daraja_rs::Daraja;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use std::os::unix::fs::PermissionsExt;
@@ -183,8 +186,21 @@ enum Commands {
         #[arg(long, default_value = "https://example.com/c2b/validate")]
         validation_url: String,
     },
+    /// Test C2B webhook endpoints (validation / confirmation)
+    Webhook {
+        /// Base URL of your webhook server (e.g. http://localhost:3000/c2b)
+        url: String,
+        /// Endpoint to hit: confirm (default) or validate
+        endpoint: Option<String>,
+    },
     /// Production readiness check
     Doctor,
+    /// Local C2B callback dev server — register URLs and print webhooks
+    Listen {
+        /// Port to listen on
+        #[arg(long, default_value_t = 8181)]
+        port: u16,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -387,7 +403,7 @@ fn key_path() -> Result<PathBuf, DarajaError> {
 }
 
 /// Load the SDK key: try DARAJA_KEY env var first, then fall back to ~/.config/daraja/key.
-fn load_sdk_key() -> Result<String, DarajaError> {
+pub(crate) fn load_sdk_key() -> Result<String, DarajaError> {
     if let Ok(key) = std::env::var("DARAJA_KEY") {
         if !key.is_empty() {
             return Ok(key);
@@ -540,7 +556,9 @@ async fn run() -> Result<(), DarajaError> {
             )
             .await
         }
+        Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint).await,
         Commands::Doctor => cmd_doctor().await,
+        Commands::Listen { port } => listen::run(port).await,
     }
 }
 
@@ -901,14 +919,14 @@ async fn cmd_export_key() -> Result<(), DarajaError> {
     Ok(())
 }
 
-async fn load_daraja() -> Result<Daraja, DarajaError> {
+pub(crate) async fn load_daraja() -> Result<Daraja, DarajaError> {
     let key = load_sdk_key()?;
     // Set env var so Daraja::from_env() can find it
     unsafe { std::env::set_var("DARAJA_KEY", &key); }
     Daraja::from_env()
 }
 
-fn load_shortcode() -> Result<String, DarajaError> {
+pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
     let key = load_sdk_key()?;
     let key_bytes = config::extract_key_from_sdk_key(&key)?;
     let path = credentials_path()?;
@@ -1090,6 +1108,58 @@ async fn cmd_reverse(
     println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
     println!("  Response Code:             {}", resp.response_code);
     println!("  Response Description:      {}", resp.response_description);
+    println!();
+
+    Ok(())
+}
+
+fn sample_c2b_confirmation() -> C2bConfirmation {
+    C2bConfirmation {
+        transaction_type: "Pay Bill".into(),
+        trans_id: "QEJ78H8JKR".into(),
+        trans_time: "20240101120000".into(),
+        trans_amount: "500.00".into(),
+        business_short_code: "174379".into(),
+        bill_ref_number: "Test".into(),
+        msisdn: "254712345678".into(),
+        first_name: Some("John".into()),
+    }
+}
+
+async fn cmd_webhook(url: String, endpoint: Option<String>) -> Result<(), DarajaError> {
+    let endpoint = endpoint.as_deref().unwrap_or("confirm");
+    if endpoint != "confirm" && endpoint != "validate" {
+        return Err(DarajaError::Config(format!(
+            "invalid endpoint '{endpoint}': expected 'confirm' or 'validate'"
+        )));
+    }
+
+    let target = format!("{}/{}", url.trim_end_matches('/'), endpoint);
+    let body = sample_c2b_confirmation();
+    let json = serde_json::to_string(&body).map_err(|e| {
+        DarajaError::Config(format!("failed to serialize sample payload: {e}"))
+    })?;
+
+    let resp = reqwest::Client::new()
+        .post(&target)
+        .header("Content-Type", "application/json")
+        .header("X-Safaricom-Signature", "test-signature")
+        .body(json)
+        .send()
+        .await
+        .map_err(|e| DarajaError::Network(e.to_string()))?;
+
+    let status = resp.status();
+    let response_body = resp
+        .text()
+        .await
+        .map_err(|e| DarajaError::Network(e.to_string()))?;
+
+    println!();
+    println!("  Endpoint: {target}");
+    println!("  Status:   {status}");
+    println!("  Body:");
+    println!("  {response_body}");
     println!();
 
     Ok(())

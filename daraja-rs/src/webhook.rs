@@ -29,7 +29,7 @@ pub fn validate_c2b_confirmation(body: &[u8]) -> Result<C2bConfirmation, DarajaE
 }
 
 /// A parsed C2B confirmation callback.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct C2bConfirmation {
     #[serde(rename = "TransactionType")]
     pub transaction_type: String,
