@@ -5,6 +5,7 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod idempotency;
 pub mod security;
 pub mod types;
 pub mod webhook;

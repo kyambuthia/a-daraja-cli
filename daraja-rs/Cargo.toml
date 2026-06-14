@@ -20,6 +20,7 @@ zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 # Idempotency
 uuid = { version = "1", features = ["v4"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 # Error handling
 thiserror = "2"
 # Time
@@ -28,5 +29,6 @@ x509-cert = { version = "0.2.5", features = ["pem"] }
 
 [dev-dependencies]
 rcgen = "0.14.8"
+tempfile = "3"
 tokio-test = "0.4"
 wiremock = "0.6"
