@@ -11,6 +11,7 @@ use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment};
 use daraja_rs::Daraja;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use zeroize::Zeroizing;
@@ -185,6 +186,37 @@ fn credentials_path() -> Result<PathBuf, DarajaError> {
     let home = std::env::var("HOME")
         .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
     Ok(PathBuf::from(format!("{home}/.config/daraja/credentials.enc")))
+}
+
+fn key_path() -> Result<PathBuf, DarajaError> {
+    let home = std::env::var("HOME")
+        .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
+    Ok(PathBuf::from(format!("{home}/.config/daraja/key")))
+}
+
+/// Load the SDK key: try DARAJA_KEY env var first, then fall back to ~/.config/daraja/key.
+fn load_sdk_key() -> Result<String, DarajaError> {
+    if let Ok(key) = std::env::var("DARAJA_KEY") {
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+    let path = key_path()?;
+    let key = std::fs::read_to_string(&path)
+        .map(|s| s.trim().to_string())
+        .map_err(|_| {
+            DarajaError::Config(format!(
+                "No DARAJA_KEY set and no key file at {}. Run `mpesa init` first.",
+                path.display()
+            ))
+        })?;
+    if key.is_empty() {
+        return Err(DarajaError::Config(format!(
+            "Key file at {} is empty. Run `mpesa init` first.",
+            path.display()
+        )));
+    }
+    Ok(key)
 }
 
 fn normalize_phone(phone: &str) -> String {
@@ -400,15 +432,30 @@ async fn cmd_init(env_flag: Option<InitEnvironment>) -> Result<(), DarajaError> 
         ))
     })?;
 
+    // Auto-save the key so user doesn't need to set DARAJA_KEY manually
+    let key_path = key_path()?;
+    std::fs::write(&key_path, &sdk_key).map_err(|e| {
+        DarajaError::Config(format!("failed to write key to {}: {e}", key_path.display()))
+    })?;
+    // Restrict permissions: only the owner can read the key
+    let mut perms = std::fs::metadata(&key_path)
+        .map_err(|e| DarajaError::Config(format!("failed to read key file metadata: {e}")))?
+        .permissions();
+    perms.set_mode(0o600);
+    std::fs::set_permissions(&key_path, perms).map_err(|e| {
+        DarajaError::Config(format!("failed to set key file permissions: {e}"))
+    })?;
+
     println!();
     println!("  ✓ Encrypted credentials saved.");
+    println!("  ✓ SDK key saved to {} (owner-read-only)", key_path.display());
     println!();
     println!("  Your SDK key:");
     println!();
-    println!("    {sdk_key}   ← THIS IS THE ONLY THING YOU NEED TO SAVE");
+    println!("    {sdk_key}");
     println!();
-    println!("  Add to your .env:");
-    println!("    DARAJA_KEY=\"{sdk_key}\"");
+    println!("  The key is auto-loaded by all mpesa commands. No env var needed.");
+    println!("  For CI/CD or Docker, set DARAJA_KEY=\"{sdk_key}\"");
     println!();
     if env_label == "sandbox" {
         println!("  Add production credentials later with:");
@@ -420,11 +467,14 @@ async fn cmd_init(env_flag: Option<InitEnvironment>) -> Result<(), DarajaError> 
 }
 
 async fn load_daraja() -> Result<Daraja, DarajaError> {
+    let key = load_sdk_key()?;
+    // Set env var so Daraja::from_env() can find it
+    unsafe { std::env::set_var("DARAJA_KEY", &key); }
     Daraja::from_env()
 }
 
 fn load_shortcode() -> Result<String, DarajaError> {
-    let key = std::env::var("DARAJA_KEY").map_err(|_| DarajaError::MissingApiKey)?;
+    let key = load_sdk_key()?;
     let key_bytes = config::extract_key_from_sdk_key(&key)?;
     let path = credentials_path()?;
     let encrypted = std::fs::read(&path).map_err(|e| {
@@ -447,7 +497,7 @@ async fn cmd_stk(
     let callback = match callback_url {
         Some(url) => url,
         None => {
-            let key = std::env::var("DARAJA_KEY").map_err(|_| DarajaError::MissingApiKey)?;
+            let key = load_sdk_key()?;
             if key.starts_with("dsk_live_") {
                 return Err(DarajaError::Config(
                     "callback URL is required for production — pass --callback-url".into(),
@@ -667,19 +717,25 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
         },
     });
 
-    let daraja_key = std::env::var("DARAJA_KEY").ok();
+    let daraja_key = load_sdk_key().ok();
     let key_set = daraja_key.is_some();
+    let key_from_env = std::env::var("DARAJA_KEY").ok().is_some();
+
     checks.push(CheckItem {
         ok: key_set,
         message: if key_set {
-            "DARAJA_KEY is set".to_string()
+            if key_from_env {
+                "DARAJA_KEY is set (env var)".to_string()
+            } else {
+                "SDK key loaded from ~/.config/daraja/key".to_string()
+            }
         } else {
             "DARAJA_KEY is not set".to_string()
         },
         hint: if key_set {
             None
         } else {
-            Some("Export the key from `mpesa init` into your .env.".to_string())
+            Some("Run `mpesa init` to set up.".to_string())
         },
     });
 

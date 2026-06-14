@@ -10,18 +10,6 @@ use daraja_rs::types::Environment;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use zeroize::Zeroizing;
-use std::sync::Once;
-
-static INIT: Once = Once::new();
-
-fn setup_test_env(key: &str) {
-    INIT.call_once(|| {
-        // No-op for first call
-    });
-    unsafe {
-        std::env::set_var("DARAJA_KEY", key);
-    }
-}
 
 fn test_credentials() -> Credentials {
     Credentials {
