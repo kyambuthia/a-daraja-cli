@@ -39,15 +39,40 @@ enum Commands {
         /// Environment to configure (skips the interactive prompt when set)
         #[arg(long, value_enum)]
         env: Option<InitEnvironment>,
+        /// Consumer key (non-interactive init)
+        #[arg(long)]
+        consumer_key: Option<String>,
+        /// Consumer secret (non-interactive init)
+        #[arg(long)]
+        consumer_secret: Option<String>,
+        /// Lipa Na M-Pesa passkey (non-interactive init)
+        #[arg(long)]
+        passkey: Option<String>,
+        /// PayBill / Till shortcode (non-interactive init)
+        #[arg(long)]
+        shortcode: Option<String>,
+        /// B2C initiator name (optional, non-interactive init)
+        #[arg(long)]
+        initiator_name: Option<String>,
+        /// B2C initiator password (optional, non-interactive init)
+        #[arg(long)]
+        initiator_password: Option<String>,
+        /// Error if required flags are missing instead of falling back to prompts
+        #[arg(long)]
+        non_interactive: bool,
     },
+    /// Show current configuration (never exposes secrets)
+    Config,
+    /// Print the SDK key for shell export: export DARAJA_KEY=$(mpesa export-key)
+    ExportKey,
     /// STK Push — Lipa Na M-Pesa Online
     Stk {
         /// Customer phone number (254XXXXXXXXX or 07XXXXXXXX)
         #[arg(long)]
         phone: String,
-        /// Amount in KES
+        /// Amount in KES (whole shillings; decimals are truncated)
         #[arg(long)]
-        amount: u64,
+        amount: String,
         /// Payment description shown to the customer
         #[arg(long, default_value = "Payment")]
         description: String,
@@ -57,15 +82,18 @@ enum Commands {
         /// Callback URL for STK result (required for production)
         #[arg(long)]
         callback_url: Option<String>,
+        /// Skip pre-flight confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// B2C payment — send money to a phone number
     Send {
         /// Recipient phone number
         #[arg(long)]
         to: String,
-        /// Amount in KES
+        /// Amount in KES (whole shillings; decimals are truncated)
         #[arg(long)]
-        amount: u64,
+        amount: String,
         /// Payment remarks
         #[arg(long, default_value = "Payment")]
         remarks: String,
@@ -81,6 +109,9 @@ enum Commands {
         /// Timeout callback URL
         #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
         timeout_url: String,
+        /// Skip pre-flight confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Query transaction status
     Status {
@@ -114,9 +145,9 @@ enum Commands {
         /// M-Pesa transaction ID to reverse
         #[arg(long)]
         id: String,
-        /// Amount to reverse in KES
+        /// Amount to reverse in KES (whole shillings; decimals are truncated)
         #[arg(long)]
-        amount: u64,
+        amount: String,
         /// Receiver party shortcode
         #[arg(long, default_value = "600000")]
         receiver: String,
@@ -176,6 +207,166 @@ impl SendCommand {
             SendCommand::Promotion => B2cCommand::PromotionPayment,
         }
     }
+}
+
+struct InitOptions {
+    env: Option<InitEnvironment>,
+    consumer_key: Option<String>,
+    consumer_secret: Option<String>,
+    passkey: Option<String>,
+    shortcode: Option<String>,
+    initiator_name: Option<String>,
+    initiator_password: Option<String>,
+    non_interactive: bool,
+}
+
+impl InitOptions {
+    fn has_all_required(&self) -> bool {
+        self.env.is_some()
+            && self.consumer_key.is_some()
+            && self.consumer_secret.is_some()
+            && self.passkey.is_some()
+            && self.shortcode.is_some()
+    }
+}
+
+enum InitAction {
+    Fresh,
+    Update(Credentials),
+    Overwrite,
+    Cancelled,
+}
+
+fn parse_kes_amount(amount: &str) -> Result<u64, DarajaError> {
+    let amount = amount.trim();
+    if amount.is_empty() {
+        return Err(DarajaError::Config("amount cannot be empty".into()));
+    }
+
+    if let Some((whole, frac)) = amount.split_once('.') {
+        if whole.is_empty() || !whole.chars().all(|c| c.is_ascii_digit()) {
+            return Err(DarajaError::Config(format!(
+                "invalid amount '{amount}': expected a whole number of KES"
+            )));
+        }
+        if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
+            return Err(DarajaError::Config(format!(
+                "invalid amount '{amount}': expected a whole number of KES"
+            )));
+        }
+        let whole_kes: u64 = whole
+            .parse()
+            .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))?;
+        if frac.chars().any(|c| c != '0') {
+            eprintln!(
+                "  Warning: decimal portion dropped — M-Pesa amounts are whole KES."
+            );
+        }
+        return Ok(whole_kes);
+    }
+
+    if !amount.chars().all(|c| c.is_ascii_digit()) {
+        return Err(DarajaError::Config(format!(
+            "invalid amount '{amount}': expected a whole number of KES"
+        )));
+    }
+
+    amount
+        .parse()
+        .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))
+}
+
+fn sdk_key_environment(key: &str) -> Option<(&'static str, &'static str)> {
+    if key.starts_with("dsk_test_") {
+        Some(("sandbox", "dsk_test_"))
+    } else if key.starts_with("dsk_live_") {
+        Some(("production", "dsk_live_"))
+    } else {
+        None
+    }
+}
+
+fn key_source_label() -> String {
+    if std::env::var("DARAJA_KEY")
+        .ok()
+        .is_some_and(|k| !k.is_empty())
+    {
+        "DARAJA_KEY environment variable".to_string()
+    } else {
+        format!("auto-loaded from {}", key_path().unwrap_or_default().display())
+    }
+}
+
+fn load_credentials() -> Result<Credentials, DarajaError> {
+    let key = load_sdk_key()?;
+    let key_bytes = config::extract_key_from_sdk_key(&key)?;
+    let path = credentials_path()?;
+    let encrypted = std::fs::read(&path).map_err(|e| {
+        DarajaError::Config(format!("failed to read credentials: {e}"))
+    })?;
+    config::decrypt_credentials(&encrypted, &key_bytes)
+}
+
+fn try_load_existing_credentials() -> Option<Credentials> {
+    if !credentials_path().ok()?.exists() {
+        return None;
+    }
+    load_credentials().ok()
+}
+
+fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), DarajaError> {
+    let key_bytes = config::extract_key_from_sdk_key(sdk_key)?;
+    let encrypted = config::encrypt_credentials(credentials, &key_bytes)?;
+
+    let creds_path = credentials_path()?;
+    if let Some(parent) = creds_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            DarajaError::Config(format!("failed to create config directory: {e}"))
+        })?;
+    }
+    std::fs::write(&creds_path, encrypted).map_err(|e| {
+        DarajaError::Config(format!(
+            "failed to write credentials to {}: {e}",
+            creds_path.display()
+        ))
+    })?;
+
+    let key_file = key_path()?;
+    std::fs::write(&key_file, sdk_key).map_err(|e| {
+        DarajaError::Config(format!("failed to write key to {}: {e}", key_file.display()))
+    })?;
+    let mut perms = std::fs::metadata(&key_file)
+        .map_err(|e| DarajaError::Config(format!("failed to read key file metadata: {e}")))?
+        .permissions();
+    perms.set_mode(0o600);
+    std::fs::set_permissions(&key_file, perms).map_err(|e| {
+        DarajaError::Config(format!("failed to set key file permissions: {e}"))
+    })?;
+
+    Ok(())
+}
+
+fn confirm_payment(
+    phone: &str,
+    amount: u64,
+    description: &str,
+    skip: bool,
+) -> Result<(), DarajaError> {
+    println!("  Phone: {}", phone);
+    println!("  Amount: KES {}", amount);
+    println!("  Description: {}", description);
+    if skip {
+        return Ok(());
+    }
+    let confirmed = Confirm::with_theme(&theme())
+        .with_prompt("Send payment?")
+        .default(false)
+        .interact()
+        .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
+    if !confirmed {
+        return Err(DarajaError::Config("payment cancelled".into()));
+    }
+    Ok(())
 }
 
 fn theme() -> ColorfulTheme {
@@ -256,14 +447,38 @@ async fn run() -> Result<(), DarajaError> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { env } => cmd_init(env).await,
+        Commands::Init {
+            env,
+            consumer_key,
+            consumer_secret,
+            passkey,
+            shortcode,
+            initiator_name,
+            initiator_password,
+            non_interactive,
+        } => {
+            cmd_init(InitOptions {
+                env,
+                consumer_key,
+                consumer_secret,
+                passkey,
+                shortcode,
+                initiator_name,
+                initiator_password,
+                non_interactive,
+            })
+            .await
+        }
+        Commands::Config => cmd_config().await,
+        Commands::ExportKey => cmd_export_key().await,
         Commands::Stk {
             phone,
             amount,
             description,
             reference,
             callback_url,
-        } => cmd_stk(phone, amount, description, reference, callback_url).await,
+            yes,
+        } => cmd_stk(phone, amount, description, reference, callback_url, yes).await,
         Commands::Send {
             to,
             amount,
@@ -272,8 +487,9 @@ async fn run() -> Result<(), DarajaError> {
             command,
             result_url,
             timeout_url,
+            yes,
         } => {
-            cmd_send(to, amount, remarks, occasion, command, result_url, timeout_url).await
+            cmd_send(to, amount, remarks, occasion, command, result_url, timeout_url, yes).await
         }
         Commands::Status {
             id,
@@ -296,6 +512,7 @@ async fn run() -> Result<(), DarajaError> {
             result_url,
             timeout_url,
         } => {
+            let amount = parse_kes_amount(&amount)?;
             cmd_reverse(
                 id,
                 amount,
@@ -326,49 +543,149 @@ async fn run() -> Result<(), DarajaError> {
     }
 }
 
-async fn cmd_init(env_flag: Option<InitEnvironment>) -> Result<(), DarajaError> {
-    print_banner();
+fn init_environment_label(env: InitEnvironment) -> &'static str {
+    match env {
+        InitEnvironment::Sandbox => "sandbox",
+        InitEnvironment::Production => "production",
+    }
+}
 
-    let env_label = match env_flag {
-        Some(InitEnvironment::Sandbox) => "sandbox",
-        Some(InitEnvironment::Production) => "production",
-        None => {
-            let options = ["sandbox", "production"];
-            let selection = Select::with_theme(&theme())
-                .with_prompt("Environment")
-                .default(0)
-                .items(&options)
-                .interact()
-                .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
-            options[selection]
-        }
-    };
+fn init_key_prefix(env_label: &str) -> &'static str {
+    if env_label == "sandbox" {
+        "test"
+    } else {
+        "live"
+    }
+}
 
-    let key_prefix = if env_label == "sandbox" { "test" } else { "live" };
+fn prompt_existing_credentials_action(existing: &Credentials) -> Result<InitAction, DarajaError> {
+    let sdk_key = load_sdk_key()?;
+    let (env_name, _) = sdk_key_environment(&sdk_key).unwrap_or(("unknown", "dsk_???"));
+    println!();
+    println!(
+        "  Existing credentials found ({env_name}, shortcode {}).",
+        existing.shortcode
+    );
 
-    let consumer_key: String = Input::with_theme(&theme())
-        .with_prompt("Consumer Key")
+    let choice: String = Input::with_theme(&theme())
+        .with_prompt("[U]pdate  [O]verwrite  [C]ancel")
         .interact_text()
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
 
-    let consumer_secret: String = Password::with_theme(&theme())
-        .with_prompt("Consumer Secret")
-        .interact()
+    match choice.trim().to_ascii_lowercase().as_str() {
+        "u" | "update" => Ok(InitAction::Update(existing.clone())),
+        "o" | "overwrite" => Ok(InitAction::Overwrite),
+        _ => Ok(InitAction::Cancelled),
+    }
+}
+
+fn build_initiator_credentials(
+    name: Option<String>,
+    password: Option<String>,
+) -> Result<(Option<Zeroizing<String>>, Option<Zeroizing<String>>), DarajaError> {
+    match (name, password) {
+        (Some(n), Some(p)) => Ok((Some(Zeroizing::new(n)), Some(Zeroizing::new(p)))),
+        (None, None) => Ok((None, None)),
+        _ => Err(DarajaError::Config(
+            "initiator requires both --initiator-name and --initiator-password".into(),
+        )),
+    }
+}
+
+fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, DarajaError> {
+    let (initiator_name, initiator_password) = build_initiator_credentials(
+        opts.initiator_name.clone(),
+        opts.initiator_password.clone(),
+    )?;
+
+    Ok(Credentials {
+        consumer_key: Zeroizing::new(
+            opts.consumer_key
+                .clone()
+                .ok_or_else(|| DarajaError::Config("missing --consumer-key".into()))?,
+        ),
+        consumer_secret: Zeroizing::new(
+            opts.consumer_secret
+                .clone()
+                .ok_or_else(|| DarajaError::Config("missing --consumer-secret".into()))?,
+        ),
+        passkey: Zeroizing::new(
+            opts.passkey
+                .clone()
+                .ok_or_else(|| DarajaError::Config("missing --passkey".into()))?,
+        ),
+        shortcode: opts
+            .shortcode
+            .clone()
+            .ok_or_else(|| DarajaError::Config("missing --shortcode".into()))?,
+        initiator_name,
+        initiator_password,
+    })
+}
+
+fn prompt_credentials_interactive(
+    env_label: &str,
+    defaults: Option<&Credentials>,
+) -> Result<Credentials, DarajaError> {
+    let consumer_key_default = defaults
+        .map(|c| c.consumer_key.to_string())
+        .unwrap_or_default();
+    let consumer_key: String = Input::with_theme(&theme())
+        .with_prompt("Consumer Key")
+        .default(consumer_key_default)
+        .interact_text()
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
 
-    let passkey: String = Password::with_theme(&theme())
-        .with_prompt("Passkey")
-        .interact()
-        .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
-
-    let default_shortcode = if env_label == "sandbox" {
-        "174379"
+    let consumer_secret: String = if defaults.is_some() {
+        Password::with_theme(&theme())
+            .with_prompt("Consumer Secret (Enter to keep existing)")
+            .allow_empty_password(true)
+            .interact()
+            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
     } else {
-        ""
+        Password::with_theme(&theme())
+            .with_prompt("Consumer Secret")
+            .interact()
+            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
     };
+    let consumer_secret = if consumer_secret.is_empty() {
+        defaults
+            .map(|c| c.consumer_secret.to_string())
+            .unwrap_or(consumer_secret)
+    } else {
+        consumer_secret
+    };
+
+    let passkey: String = if defaults.is_some() {
+        Password::with_theme(&theme())
+            .with_prompt("Passkey (Enter to keep existing)")
+            .allow_empty_password(true)
+            .interact()
+            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
+    } else {
+        Password::with_theme(&theme())
+            .with_prompt("Passkey")
+            .interact()
+            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
+    };
+    let passkey = if passkey.is_empty() {
+        defaults
+            .map(|c| c.passkey.to_string())
+            .unwrap_or(passkey)
+    } else {
+        passkey
+    };
+
+    let default_shortcode = defaults.map(|c| c.shortcode.clone()).unwrap_or_else(|| {
+        if env_label == "sandbox" {
+            "174379".to_string()
+        } else {
+            String::new()
+        }
+    });
     let shortcode: String = Input::with_theme(&theme())
         .with_prompt("Shortcode")
-        .default(default_shortcode.to_string())
+        .default(default_shortcode)
         .interact_text()
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
 
@@ -376,27 +693,52 @@ async fn cmd_init(env_flag: Option<InitEnvironment>) -> Result<(), DarajaError> 
     println!("  For B2C / transaction status / reversal (optional):");
     println!();
 
+    let had_initiator = defaults
+        .and_then(|c| c.initiator_name.as_ref())
+        .is_some();
     let add_initiator = Confirm::with_theme(&theme())
         .with_prompt("Configure initiator credentials?")
-        .default(env_label == "sandbox")
+        .default(had_initiator || env_label == "sandbox")
         .interact()
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
 
     let (initiator_name, initiator_password) = if add_initiator {
+        let default_name = defaults
+            .and_then(|c| c.initiator_name.as_ref())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| {
+                if env_label == "sandbox" {
+                    "apitest".to_string()
+                } else {
+                    String::new()
+                }
+            });
         let name: String = Input::with_theme(&theme())
             .with_prompt("Initiator Name")
-            .default(if env_label == "sandbox" {
-                "apitest".to_string()
-            } else {
-                String::new()
-            })
+            .default(default_name)
             .interact_text()
             .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
 
-        let password: String = Password::with_theme(&theme())
-            .with_prompt("Initiator Password")
-            .interact()
-            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
+        let password: String = if defaults.is_some() {
+            Password::with_theme(&theme())
+                .with_prompt("Initiator Password (Enter to keep existing)")
+                .allow_empty_password(true)
+                .interact()
+                .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
+        } else {
+            Password::with_theme(&theme())
+                .with_prompt("Initiator Password")
+                .interact()
+                .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
+        };
+        let password = if password.is_empty() {
+            defaults
+                .and_then(|c| c.initiator_password.as_ref())
+                .map(|p| p.to_string())
+                .unwrap_or(password)
+        } else {
+            password
+        };
 
         (
             Some(Zeroizing::new(name)),
@@ -406,46 +748,18 @@ async fn cmd_init(env_flag: Option<InitEnvironment>) -> Result<(), DarajaError> 
         (None, None)
     };
 
-    let credentials = Credentials {
+    Ok(Credentials {
         consumer_key: Zeroizing::new(consumer_key),
         consumer_secret: Zeroizing::new(consumer_secret),
         passkey: Zeroizing::new(passkey),
         shortcode,
         initiator_name,
         initiator_password,
-    };
+    })
+}
 
-    let sdk_key = config::generate_sdk_key(key_prefix);
-    let key_bytes = config::extract_key_from_sdk_key(&sdk_key)?;
-    let encrypted = config::encrypt_credentials(&credentials, &key_bytes)?;
-
-    let creds_path = credentials_path()?;
-    if let Some(parent) = creds_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            DarajaError::Config(format!("failed to create config directory: {e}"))
-        })?;
-    }
-    std::fs::write(&creds_path, encrypted).map_err(|e| {
-        DarajaError::Config(format!(
-            "failed to write credentials to {}: {e}",
-            creds_path.display()
-        ))
-    })?;
-
-    // Auto-save the key so user doesn't need to set DARAJA_KEY manually
+fn print_init_success(env_label: &str, sdk_key: &str) -> Result<(), DarajaError> {
     let key_path = key_path()?;
-    std::fs::write(&key_path, &sdk_key).map_err(|e| {
-        DarajaError::Config(format!("failed to write key to {}: {e}", key_path.display()))
-    })?;
-    // Restrict permissions: only the owner can read the key
-    let mut perms = std::fs::metadata(&key_path)
-        .map_err(|e| DarajaError::Config(format!("failed to read key file metadata: {e}")))?
-        .permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(&key_path, perms).map_err(|e| {
-        DarajaError::Config(format!("failed to set key file permissions: {e}"))
-    })?;
-
     println!();
     println!("  ✓ Encrypted credentials saved.");
     println!("  ✓ SDK key saved to {} (owner-read-only)", key_path.display());
@@ -462,7 +776,120 @@ async fn cmd_init(env_flag: Option<InitEnvironment>) -> Result<(), DarajaError> 
         println!("    mpesa init --env production");
     }
     println!();
+    Ok(())
+}
 
+async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
+    if opts.non_interactive && !opts.has_all_required() {
+        return Err(DarajaError::Config(
+            "non-interactive init requires --env, --consumer-key, --consumer-secret, \
+             --passkey, and --shortcode"
+                .into(),
+        ));
+    }
+
+    if opts.has_all_required() {
+        let env_label = init_environment_label(opts.env.expect("checked above"));
+        let credentials = credentials_from_init_options(&opts)?;
+        let sdk_key = config::generate_sdk_key(init_key_prefix(env_label));
+        save_credentials(&credentials, &sdk_key)?;
+        print_init_success(env_label, &sdk_key)?;
+        return Ok(());
+    }
+
+    let existing = try_load_existing_credentials();
+    let action = if let Some(ref creds) = existing {
+        prompt_existing_credentials_action(creds)?
+    } else {
+        InitAction::Fresh
+    };
+
+    if matches!(action, InitAction::Cancelled) {
+        println!("  Cancelled.");
+        return Ok(());
+    }
+
+    print_banner();
+
+    let (env_label, sdk_key) = match action {
+        InitAction::Update(ref creds) => {
+            let key = load_sdk_key()?;
+            let env_label = sdk_key_environment(&key)
+                .map(|(name, _)| name)
+                .unwrap_or("sandbox");
+            let credentials =
+                prompt_credentials_interactive(env_label, Some(creds))?;
+            save_credentials(&credentials, &key)?;
+            print_init_success(env_label, &key)?;
+            return Ok(());
+        }
+        InitAction::Overwrite | InitAction::Fresh => {
+            let env_label = match opts.env {
+                Some(env) => init_environment_label(env),
+                None => {
+                    let options = ["sandbox", "production"];
+                    let selection = Select::with_theme(&theme())
+                        .with_prompt("Environment")
+                        .default(0)
+                        .items(&options)
+                        .interact()
+                        .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
+                    options[selection]
+                }
+            };
+            let key_prefix = init_key_prefix(env_label);
+            let sdk_key = config::generate_sdk_key(key_prefix);
+            (env_label, sdk_key)
+        }
+        InitAction::Cancelled => unreachable!(),
+    };
+
+    let credentials = prompt_credentials_interactive(env_label, None)?;
+    save_credentials(&credentials, &sdk_key)?;
+    print_init_success(env_label, &sdk_key)?;
+
+    Ok(())
+}
+
+async fn cmd_config() -> Result<(), DarajaError> {
+    let creds_path = credentials_path()?;
+    let key = load_sdk_key()?;
+    let (env_name, env_prefix) = sdk_key_environment(&key).unwrap_or(("unknown", "unknown"));
+
+    println!();
+    println!("  Environment: {env_name} ({env_prefix})");
+
+    if creds_path.exists() {
+        match load_credentials() {
+            Ok(creds) => {
+                println!("  Shortcode: {}", creds.shortcode);
+                if let Some(name) = creds.initiator_name.as_ref() {
+                    println!("  Initiator: {} (configured)", name.as_str());
+                } else {
+                    println!("  Initiator: not configured");
+                }
+                println!("  Credentials: encrypted ({})", creds_path.display());
+            }
+            Err(err) => {
+                println!("  Credentials: encrypted ({})", creds_path.display());
+                println!("  Warning: could not decrypt credentials ({err})");
+            }
+        }
+    } else {
+        println!("  Credentials: not found");
+        println!("  Shortcode: —");
+        println!("  Initiator: not configured");
+    }
+
+    println!("  Key source: {}", key_source_label());
+    println!();
+
+    Ok(())
+}
+
+async fn cmd_export_key() -> Result<(), DarajaError> {
+    let key = load_sdk_key()?;
+    print!("{key}");
     Ok(())
 }
 
@@ -486,11 +913,13 @@ fn load_shortcode() -> Result<String, DarajaError> {
 
 async fn cmd_stk(
     phone: String,
-    amount: u64,
+    amount: String,
     description: String,
     reference: String,
     callback_url: Option<String>,
+    yes: bool,
 ) -> Result<(), DarajaError> {
+    let amount = parse_kes_amount(&amount)?;
     let daraja = load_daraja().await?;
     let phone = normalize_phone(&phone);
 
@@ -509,6 +938,10 @@ async fn cmd_stk(
             DEFAULT_CALLBACK.to_string()
         }
     };
+
+    println!();
+    confirm_payment(&phone, amount, &description, yes)?;
+    println!();
 
     let resp = stk_push(
         daraja.client(),
@@ -534,15 +967,21 @@ async fn cmd_stk(
 
 async fn cmd_send(
     to: String,
-    amount: u64,
+    amount: String,
     remarks: String,
     occasion: String,
     command: SendCommand,
     result_url: String,
     timeout_url: String,
+    yes: bool,
 ) -> Result<(), DarajaError> {
+    let amount = parse_kes_amount(&amount)?;
     let daraja = load_daraja().await?;
     let phone = normalize_phone(&to);
+
+    println!();
+    confirm_payment(&phone, amount, &remarks, yes)?;
+    println!();
 
     let resp = b2c_payment(
         daraja.client(),
