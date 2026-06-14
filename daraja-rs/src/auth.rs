@@ -4,8 +4,14 @@
 // automatically when they expire.
 
 use crate::error::DarajaError;
+use crate::types::Environment;
+
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use chrono::{Duration, Utc};
 
 /// An OAuth access token with expiry tracking.
+#[derive(Clone)]
 pub struct Token {
     pub access_token: String,
     pub expires_at: chrono::DateTime<chrono::Utc>,
@@ -16,24 +22,93 @@ pub struct Token {
 pub struct TokenManager {
     consumer_key: String,
     consumer_secret: String,
-    environment: super::types::Environment,
+    environment: Environment,
     cached_token: Option<Token>,
+    http_client: reqwest::Client,
+    base_url_override: Option<String>,
 }
 
 impl TokenManager {
     /// Create a new token manager.
-    pub fn new(consumer_key: String, consumer_secret: String, environment: super::types::Environment) -> Self {
+    pub fn new(consumer_key: String, consumer_secret: String, environment: Environment) -> Self {
         TokenManager {
             consumer_key,
             consumer_secret,
             environment,
             cached_token: None,
+            http_client: reqwest::Client::new(),
+            base_url_override: None,
         }
+    }
+
+    /// Override the base URL (for testing with wiremock).
+    pub fn with_base_url(mut self, url: String) -> Self {
+        self.base_url_override = Some(url);
+        self
     }
 
     /// Get a valid token (cached or freshly fetched).
     pub async fn get_token(&mut self) -> Result<Token, DarajaError> {
-        todo!()
+        if !Self::is_expired(&self.cached_token) {
+            return Ok(self.cached_token.as_ref().unwrap().clone());
+        }
+
+        let base_url = self
+            .base_url_override
+            .as_deref()
+            .unwrap_or_else(|| self.environment.base_url());
+        let url = format!(
+            "{}/oauth/v1/generate?grant_type=client_credentials",
+            base_url
+        );
+
+        let credentials = format!("{}:{}", self.consumer_key, self.consumer_secret);
+        let encoded = STANDARD.encode(credentials);
+        let auth = format!("Basic {}", encoded);
+
+        let response = self
+            .http_client
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(|e| DarajaError::AuthFailed(format!("request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_else(|_| "<no body>".to_string());
+            return Err(DarajaError::AuthFailed(format!("HTTP {}: {}", status, body)));
+        }
+
+        #[derive(serde::Deserialize)]
+        struct OAuthResponse {
+            access_token: String,
+            expires_in: String,
+        }
+
+        let oauth: OAuthResponse = response
+            .json()
+            .await
+            .map_err(|e| DarajaError::AuthFailed(format!("failed to parse response: {}", e)))?;
+
+        let expires_in: i64 = oauth
+            .expires_in
+            .parse()
+            .map_err(|e| {
+                DarajaError::AuthFailed(format!(
+                    "invalid expires_in '{}': {}",
+                    oauth.expires_in, e
+                ))
+            })?;
+
+        let expires_at = Utc::now() + Duration::seconds(expires_in);
+
+        let token = Token {
+            access_token: oauth.access_token,
+            expires_at,
+        };
+        self.cached_token = Some(token.clone());
+        Ok(token)
     }
 
     /// Check whether a cached token has expired.
@@ -191,5 +266,137 @@ mod tests {
         );
         // Constructor should not panic, and struct compiles with fields
         assert!(manager.cached_token.is_none());
+    }
+
+    // ── Async: get_token with wiremock ────────────────────────
+
+    #[cfg(test)]
+    mod async_tests {
+        use super::*;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        #[tokio::test]
+        async fn get_token_fetches_new_token_on_first_call() {
+            let server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok-123", "expires_in": "3599"})
+                ))
+                .mount(&server)
+                .await;
+
+            let mut manager = TokenManager::new(
+                "ck".into(), "cs".into(),
+                crate::types::Environment::Sandbox,
+            ).with_base_url(server.uri());
+
+            let token = manager.get_token().await.expect("token fetch should succeed");
+            assert_eq!(token.access_token, "tok-123");
+        }
+
+        #[tokio::test]
+        async fn get_token_caches_and_reuses() {
+            let server = MockServer::start().await;
+
+            // Only one mock hit expected — second call returns cached
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok-456", "expires_in": "3599"})
+                ))
+                .expect(1) // Only called once
+                .mount(&server)
+                .await;
+
+            let mut manager = TokenManager::new(
+                "ck".into(), "cs".into(),
+                crate::types::Environment::Sandbox,
+            ).with_base_url(server.uri());
+
+            let t1 = manager.get_token().await.unwrap();
+            let t2 = manager.get_token().await.unwrap();
+            assert_eq!(t1.access_token, t2.access_token);
+        }
+
+        #[tokio::test]
+        async fn get_token_fetches_new_after_invalidate() {
+            let server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok-first", "expires_in": "3599"})
+                ))
+                .up_to_n_times(1)
+                .mount(&server)
+                .await;
+
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok-second", "expires_in": "3599"})
+                ))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let mut manager = TokenManager::new(
+                "ck".into(), "cs".into(),
+                crate::types::Environment::Sandbox,
+            ).with_base_url(server.uri());
+
+            let t1 = manager.get_token().await.unwrap();
+            assert_eq!(t1.access_token, "tok-first");
+
+            manager.invalidate();
+            let t2 = manager.get_token().await.unwrap();
+            assert_eq!(t2.access_token, "tok-second");
+        }
+
+        #[tokio::test]
+        async fn get_token_returns_error_on_http_failure() {
+            let server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(500).set_body_string("Internal Error"))
+                .mount(&server)
+                .await;
+
+            let mut manager = TokenManager::new(
+                "ck".into(), "cs".into(),
+                crate::types::Environment::Sandbox,
+            ).with_base_url(server.uri());
+
+            let result = manager.get_token().await;
+            assert!(result.is_err(), "HTTP 500 should return error");
+        }
+
+        #[tokio::test]
+        async fn get_token_sends_basic_auth_header() {
+            let server = MockServer::start().await;
+
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .and(wiremock::matchers::header(
+                    "Authorization",
+                    "Basic Y2s6Y3M=", // base64 of "ck:cs"
+                ))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                ))
+                .mount(&server)
+                .await;
+
+            let mut manager = TokenManager::new(
+                "ck".into(), "cs".into(),
+                crate::types::Environment::Sandbox,
+            ).with_base_url(server.uri());
+
+            manager.get_token().await.unwrap();
+        }
     }
 }
