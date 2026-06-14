@@ -1,0 +1,29 @@
+[package]
+name = "daraja-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Encryption & encoding
+aes-gcm = "0.10"
+base64 = "0.22"
+rsa = { version = "0.9", features = ["pem"] }
+# Security
+zeroize = { version = "1", features = ["derive"] }
+rand = "0.8"
+# Idempotency
+uuid = { version = "1", features = ["v4"] }
+# Error handling
+thiserror = "2"
+# Time
+chrono = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
