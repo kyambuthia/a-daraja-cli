@@ -13,6 +13,7 @@ use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
 use daraja_rs::webhook::C2bConfirmation;
+use daraja_rs::certs::ensure_sandbox_certificate;
 use daraja_rs::Daraja;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use std::os::unix::fs::PermissionsExt;
@@ -872,6 +873,7 @@ fn print_init_success(env_label: &str, sdk_key: &str) -> Result<(), DarajaError>
     println!("  For CI/CD or Docker, set DARAJA_KEY=\"{sdk_key}\"");
     println!();
     if env_label == "sandbox" {
+        println!("  Sandbox API certificate saved to ~/.config/daraja/sandbox.cer");
         println!("  Add production credentials later with:");
         println!("    pesaraja init --env production");
     } else {
@@ -897,6 +899,9 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
         let credentials = credentials_from_init_options(&opts)?;
         let sdk_key = config::generate_sdk_key(init_key_prefix(env_label));
         save_credentials(&credentials, &sdk_key)?;
+        if env_label == "sandbox" {
+            ensure_sandbox_certificate().await?;
+        }
         print_init_success(env_label, &sdk_key)?;
         return Ok(());
     }
@@ -924,6 +929,9 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
             let credentials =
                 prompt_credentials_interactive(env_label, Some(creds))?;
             save_credentials(&credentials, &key)?;
+            if env_label == "sandbox" {
+                ensure_sandbox_certificate().await?;
+            }
             print_init_success(env_label, &key)?;
             return Ok(());
         }
@@ -950,6 +958,9 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
 
     let credentials = prompt_credentials_interactive(env_label, None)?;
     save_credentials(&credentials, &sdk_key)?;
+    if env_label == "sandbox" {
+        ensure_sandbox_certificate().await?;
+    }
     print_init_success(env_label, &sdk_key)?;
 
     Ok(())
@@ -1522,6 +1533,35 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
             message: "Using sandbox environment (dsk_test_)".into(),
             hint: None,
         });
+
+        let sandbox_cert_ok = std::env::var("DARAJA_CERT_PATH")
+            .map(|p| std::path::Path::new(&p).exists())
+            .or_else(|_| {
+                std::env::var("DARAJA_SANDBOX_CERT_PATH")
+                    .map(|p| std::path::Path::new(&p).exists())
+            })
+            .unwrap_or_else(|_| {
+                std::env::var("HOME")
+                    .map(|home| {
+                        std::path::Path::new(&format!("{home}/.config/daraja/sandbox.cer"))
+                            .exists()
+                    })
+                    .unwrap_or(false)
+            });
+        checks.push(CheckItem {
+            ok: sandbox_cert_ok,
+            message: if sandbox_cert_ok {
+                "Sandbox API certificate found".into()
+            } else {
+                "Sandbox API certificate not found".into()
+            },
+            hint: if sandbox_cert_ok {
+                None
+            } else {
+                Some("Run `pesaraja init` to download ~/.config/daraja/sandbox.cer.".into())
+            },
+        });
+
         checks.push(CheckItem {
             ok: false,
             message: "Production credentials not configured".into(),

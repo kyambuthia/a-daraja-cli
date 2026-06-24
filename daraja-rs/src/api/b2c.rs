@@ -86,11 +86,30 @@ mod tests {
         assert!(valid.contains(&B2cCommand::PromotionPayment.as_str()));
     }
 
+    fn install_test_certificate() {
+        use rand::rngs::OsRng;
+        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");
+        let pem = private_key
+            .to_public_key()
+            .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("public key PEM encoding");
+        let cert_path = dir.path().join("sandbox.cer");
+        std::fs::write(&cert_path, pem).expect("write temp cert");
+        std::mem::forget(dir);
+        unsafe { std::env::set_var("DARAJA_CERT_PATH", cert_path) };
+    }
+
     #[test]
     fn initiator_security_credential_uses_rsa_not_plain_base64() {
         use crate::config::Credentials;
         use crate::types::Environment;
         use zeroize::Zeroizing;
+
+        install_test_certificate();
 
         let creds = Credentials {
             consumer_key: Zeroizing::new("ck".into()),
@@ -134,6 +153,8 @@ mod tests {
 
         #[tokio::test]
         async fn b2c_payment_uses_correct_endpoint_path() {
+            super::install_test_certificate();
+
             let server = MockServer::start().await;
 
             Mock::given(method("GET"))

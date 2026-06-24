@@ -87,8 +87,28 @@ mod tests {
             }
         }
 
+        fn with_test_certificate() {
+            use rand::rngs::OsRng;
+            use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+
+            let dir = tempfile::tempdir().expect("temp dir");
+            let mut rng = OsRng;
+            let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");
+            let pem = private_key
+                .to_public_key()
+                .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+                .expect("public key PEM encoding");
+            let cert_path = dir.path().join("sandbox.cer");
+            std::fs::write(&cert_path, pem).expect("write temp cert");
+            // Leak tempdir so the cert file survives for the rest of the test process.
+            std::mem::forget(dir);
+            unsafe { std::env::set_var("DARAJA_CERT_PATH", cert_path) };
+        }
+
         #[tokio::test]
         async fn reverse_transaction_sends_correct_request_body() {
+            with_test_certificate();
+
             let server = MockServer::start().await;
 
             Mock::given(method("GET"))

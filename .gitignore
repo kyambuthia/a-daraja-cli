@@ -8,5 +8,6 @@
 idempotency.db
 .config/
 
-# User production cert if copied into the repo by mistake
+# Safaricom API certs if copied into the repo by mistake
+sandbox.cer
 production.cer
