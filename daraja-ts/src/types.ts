@@ -72,6 +72,38 @@ export interface RefundOptions {
   occasion?: string;
 }
 
+export interface C2bRegisterResponse {
+  OriginatorConversationID: string;
+  ConversationID: string;
+  ResponseDescription: string;
+}
+
+export interface RegisterOptions {
+  confirmationUrl: string;
+  validationUrl: string;
+  shortcode?: string;
+  responseType?: "Completed" | "Cancelled";
+}
+
+export interface SimulateOptions {
+  phone: string;
+  amount: number;
+  reference?: string;
+  shortcode?: string;
+}
+
+/** C2B confirmation callback from Daraja. */
+export interface C2bConfirmation {
+  TransactionType: string;
+  TransID: string;
+  TransTime: string;
+  TransAmount: string;
+  BusinessShortCode: string;
+  BillRefNumber: string;
+  MSISDN: string;
+  FirstName?: string;
+}
+
 /** Daraja STK callback body (POST to your callback URL). */
 export interface StkCallbackBody {
   Body: {

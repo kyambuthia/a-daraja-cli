@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DarajaError } from "./error.js";
 import type { Environment } from "./types.js";
 
@@ -50,4 +50,39 @@ export async function certificatePem(environment: Environment): Promise<string> 
   } catch (error) {
     throw new DarajaError(missingCertificateMessage(environment, path, error));
   }
+}
+
+function validateCertificatePem(pem: string): void {
+  const trimmed = pem.trim();
+  if (
+    !trimmed.includes("BEGIN CERTIFICATE") ||
+    !trimmed.includes("END CERTIFICATE")
+  ) {
+    throw new DarajaError("Downloaded sandbox certificate is not valid PEM.");
+  }
+}
+
+/** Download the sandbox API certificate if it is not already on disk. */
+export async function ensureSandboxCertificate(): Promise<string> {
+  const path = certificatePath("sandbox");
+  try {
+    await readFile(path, "utf8");
+    return path;
+  } catch {
+    // Download below.
+  }
+
+  await mkdir(dirname(path), { recursive: true });
+
+  const response = await fetch(SANDBOX_CERT_URL);
+  if (!response.ok) {
+    throw new DarajaError(
+      `Failed to download sandbox certificate from ${SANDBOX_CERT_URL}: HTTP ${response.status}`
+    );
+  }
+
+  const pem = await response.text();
+  validateCertificatePem(pem);
+  await writeFile(path, pem, "utf8");
+  return path;
 }

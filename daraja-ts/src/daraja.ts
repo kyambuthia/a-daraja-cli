@@ -1,5 +1,6 @@
 import { queryBalance } from "./api/balance.js";
 import { b2cPayment } from "./api/b2c.js";
+import { registerUrls, simulateC2b } from "./api/c2b.js";
 import { reverseTransaction } from "./api/reversal.js";
 import { stkPush, stkPushQuery } from "./api/stk-push.js";
 import type { PromptOptions } from "./api/stk-push.js";
@@ -13,10 +14,13 @@ import {
 import { missingApiKey } from "./error.js";
 import type {
   BalanceOptions,
+  C2bRegisterResponse,
   ConversationResponse,
   QueryOptions,
   RefundOptions,
+  RegisterOptions,
   SendOptions,
+  SimulateOptions,
   StkPushResponse,
 } from "./types.js";
 
@@ -64,6 +68,16 @@ export class Daraja {
   /** Reverse / refund a completed transaction. */
   async refund(options: RefundOptions): Promise<ConversationResponse> {
     return reverseTransaction(this.client, options);
+  }
+
+  /** Register C2B validation and confirmation URLs with Daraja. */
+  async register(options: RegisterOptions): Promise<C2bRegisterResponse> {
+    return registerUrls(this.client, options);
+  }
+
+  /** Simulate an incoming PayBill payment (sandbox only). */
+  async simulate(options: SimulateOptions): Promise<C2bRegisterResponse> {
+    return simulateC2b(this.client, options);
   }
 
   /** Access the underlying HTTP client for advanced API calls. */

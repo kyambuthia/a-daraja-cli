@@ -6,81 +6,92 @@ Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broke
 
 ## The problem
 
-To send a single M-Pesa payment via Daraja you need:
-
-- A consumer key and consumer secret
-- An OAuth token (that expires in 3600 seconds)
-- A passkey (which isn't the same thing as the secret)
-- A base64-encoded password made from shortcode + passkey + timestamp
-- The correct environment (sandbox vs production)
-- The correct URLs (which differ per product)
-- Headers. So many headers.
-- And god help you if the timestamp format is wrong.
+To send a single M-Pesa payment via Daraja you need OAuth tokens, passkeys, base64 passwords, timestamps, environment-specific URLs, and headers. This project handles all of that.
 
 ## The fix
 
 ```bash
-# Send money to a phone number
-mpesa send --to 254712345678 --amount 100
+# Collect payment from customer (STK Push)
+pesaraja prompt --phone 254712345678 --amount 500
 
-# Query transaction status
-mpesa status --id QEJ78H8JKR
+# Send money to a phone (B2C — production requires Go Live)
+pesaraja send --to 254712345678 --amount 100
 
-# Check account balance
-mpesa balance
-
-# Initiate STK push
-mpesa stk --phone 254712345678 --amount 500 --description "Moringa seedlings"
+# Query transaction / balance / refund
+pesaraja query --id QEJ78H8JKR
+pesaraja balance
+pesaraja refund --id QEJ78H8JKR --amount 100
 ```
-
-That's it. One command. The CLI handles OAuth tokens, password generation, expiry, retries, and all the ceremony Daraja demands.
 
 ## Install
 
 ```bash
-# Coming soon
 git clone https://github.com/kyambuthia/pesaraja
 cd pesaraja
-./install.sh
+cargo build --release -p cli
+cp target/release/pesaraja ~/.local/bin/
 ```
+
+Or use `./install.sh` when a GitHub release is available.
 
 ## Setup
 
 ```bash
-mpesa init
+pesaraja init
 ```
 
-Walks you through:
-1. Creating a Safaricom Developer account (if you don't have one)
-2. Creating a Daraja app
-3. Getting your consumer key, secret, and passkey
-4. Storing them locally (encrypted, not in your `.bash_history` like last time)
+Walks you through Daraja credentials, encrypts them to `~/.config/daraja/credentials.enc`, and prints your SDK key:
 
-## Commands (planned)
+```
+DARAJA_KEY=dsk_test_...
+```
+
+## Monorepo
+
+| Package | What |
+|---------|------|
+| `cli/` | `pesaraja` binary — init, prompt, receive, send, doctor |
+| `daraja-rs/` | Rust library |
+| `daraja-ts/` | `@pesaraja/sdk` — TypeScript / Node / Next.js |
+
+Same `DARAJA_KEY` works in every language.
+
+## TypeScript / website
+
+```typescript
+import { Daraja, parseStkCallback, stkCallbackPaid } from "@pesaraja/sdk";
+
+const d = await Daraja.fromEnv();
+await d.prompt({
+  phone: "254712345678",
+  amount: 500,
+  callbackUrl: "https://your-server.com/api/mpesa/callback",
+});
+```
+
+Callback route examples: `daraja-ts/examples/nextjs-app-router/` and `daraja-ts/examples/express/`.
+
+Install from the monorepo (npm publish not yet):
+
+```bash
+npm install file:./daraja-ts
+```
+
+## Commands
 
 | Command | What it does |
 |---------|-------------|
-| `mpesa init` | Interactive setup wizard |
-| `mpesa send` | B2C payment |
-| `mpesa stk` | STK Push (Lipa Na M-Pesa Online) |
-| `mpesa status` | Query transaction status |
-| `mpesa balance` | Account balance |
-| `mpesa reverse` | Transaction reversal |
-| `mpesa register` | C2B register URLs |
-| `mpesa webhook` | Test your validation/confirmation endpoints |
-
-## Why not just use the Daraja SDK?
-
-Because the SDK still expects you to understand OAuth flow, hand-roll the password, manage tokens yourself, and debug with cryptic `500 Internal Server Error` responses. This CLI does all that. You just want to send money.
-
-## Name
-
-Temporary. The real name will be a Swahili word or phrase. Candidates:
-
-- **madaraja** (bridges, plural) — daraja is one broken bridge, here are your bridges
-- **vusha** (to cross, to transfer) — double meaning
-- **kivuko** (ferry) — when the bridge is out, take the ferry
-- (suggestions welcome)
+| `pesaraja init` | Interactive setup wizard |
+| `pesaraja prompt` | STK Push (alias: `stk`) |
+| `pesaraja prompt-status` | Check STK result |
+| `pesaraja receive` | Local C2B callback server (sandbox) |
+| `pesaraja simulate` | Fake incoming PayBill payment (sandbox) |
+| `pesaraja send` | B2C payment |
+| `pesaraja query` | Transaction status |
+| `pesaraja balance` | Account balance |
+| `pesaraja refund` | Transaction reversal |
+| `pesaraja register` | Register C2B URLs |
+| `pesaraja doctor` | Check config and certs |
 
 ## License
 

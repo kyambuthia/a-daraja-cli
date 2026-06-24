@@ -8,6 +8,7 @@ dist/
 *.enc
 **/key
 idempotency.db
+idempotency-ts.json
 .config/
 
 # Safaricom API certs if copied into the repo by mistake

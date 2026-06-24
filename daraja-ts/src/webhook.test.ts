@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseC2bConfirmation,
   parseStkCallback,
   stkCallbackMetadata,
   stkCallbackPaid,
+  verifyCallback,
 } from "./webhook.js";
 
 describe("webhook", () => {
@@ -39,5 +41,23 @@ describe("webhook", () => {
     const meta = stkCallbackMetadata(sample.Body.stkCallback);
     expect(meta.Amount).toBe(500);
     expect(meta.MpesaReceiptNumber).toBe("QAB123");
+  });
+
+  it("parses C2B confirmation", () => {
+    const confirmation = parseC2bConfirmation({
+      TransactionType: "Pay Bill",
+      TransID: "QEJ78H8JKR",
+      TransTime: "20240101120000",
+      TransAmount: "500.00",
+      BusinessShortCode: "174379",
+      BillRefNumber: "Order-1",
+      MSISDN: "254712345678",
+    });
+    expect(confirmation.TransID).toBe("QEJ78H8JKR");
+  });
+
+  it("verifies callback signature header is present", () => {
+    expect(() => verifyCallback("{}", null)).toThrow("Invalid callback signature");
+    expect(() => verifyCallback("{}", "sig")).not.toThrow();
   });
 });
