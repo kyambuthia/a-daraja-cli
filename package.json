@@ -1,0 +1,11 @@
+{
+  "name": "pesaraja",
+  "private": true,
+  "workspaces": [
+    "daraja-ts"
+  ],
+  "scripts": {
+    "build": "npm run build -w @pesaraja/sdk",
+    "test": "npm run test -w @pesaraja/sdk"
+  }
+}
