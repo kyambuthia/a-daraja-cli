@@ -28,6 +28,50 @@ export interface StkPushResponse {
   CustomerMessage: string;
 }
 
+/** Async Daraja API response (B2C, status, balance, reversal). */
+export interface ConversationResponse {
+  OriginatorConversationID: string;
+  ConversationID: string;
+  ResponseCode: string;
+  ResponseDescription: string;
+}
+
+export type B2cCommand = "business" | "salary" | "promotion";
+
+export interface SendOptions {
+  phone: string;
+  amount: number;
+  resultUrl: string;
+  timeoutUrl: string;
+  remarks?: string;
+  occasion?: string;
+  type?: B2cCommand;
+}
+
+export interface QueryOptions {
+  transactionId: string;
+  resultUrl: string;
+  timeoutUrl: string;
+  remarks?: string;
+  occasion?: string;
+}
+
+export interface BalanceOptions {
+  resultUrl: string;
+  timeoutUrl: string;
+}
+
+export interface RefundOptions {
+  transactionId: string;
+  amount: number;
+  receiverParty: string;
+  resultUrl: string;
+  timeoutUrl: string;
+  receiverIdentifierType?: string;
+  remarks?: string;
+  occasion?: string;
+}
+
 /** Daraja STK callback body (POST to your callback URL). */
 export interface StkCallbackBody {
   Body: {
@@ -51,4 +95,15 @@ export function environmentBaseUrl(env: Environment): string {
 
 export function stkTransactionTypeValue(type: StkTransactionType): string {
   return type === "till" ? "CustomerBuyGoodsOnline" : "CustomerPayBillOnline";
+}
+
+export function b2cCommandValue(type: B2cCommand): string {
+  switch (type) {
+    case "salary":
+      return "SalaryPayment";
+    case "promotion":
+      return "PromotionPayment";
+    default:
+      return "BusinessPayment";
+  }
 }

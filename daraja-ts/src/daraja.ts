@@ -1,5 +1,9 @@
+import { queryBalance } from "./api/balance.js";
+import { b2cPayment } from "./api/b2c.js";
+import { reverseTransaction } from "./api/reversal.js";
 import { stkPush, stkPushQuery } from "./api/stk-push.js";
 import type { PromptOptions } from "./api/stk-push.js";
+import { queryStatus } from "./api/status.js";
 import { DarajaClient } from "./client.js";
 import {
   environmentFromSdkKey,
@@ -7,7 +11,14 @@ import {
   loadSdkKey,
 } from "./config.js";
 import { missingApiKey } from "./error.js";
-import type { StkPushResponse } from "./types.js";
+import type {
+  BalanceOptions,
+  ConversationResponse,
+  QueryOptions,
+  RefundOptions,
+  SendOptions,
+  StkPushResponse,
+} from "./types.js";
 
 export class Daraja {
   private constructor(private readonly client: DarajaClient) {}
@@ -33,6 +44,26 @@ export class Daraja {
   /** Check if customer completed a payment prompt. */
   async promptStatus(checkoutRequestId: string): Promise<StkPushResponse> {
     return stkPushQuery(this.client, checkoutRequestId);
+  }
+
+  /** Send money to a phone number (B2C). */
+  async send(options: SendOptions): Promise<ConversationResponse> {
+    return b2cPayment(this.client, options);
+  }
+
+  /** Query the status of an M-Pesa transaction by receipt ID. */
+  async query(options: QueryOptions): Promise<ConversationResponse> {
+    return queryStatus(this.client, options);
+  }
+
+  /** Request an account balance check (result arrives at resultUrl). */
+  async balance(options: BalanceOptions): Promise<ConversationResponse> {
+    return queryBalance(this.client, options);
+  }
+
+  /** Reverse / refund a completed transaction. */
+  async refund(options: RefundOptions): Promise<ConversationResponse> {
+    return reverseTransaction(this.client, options);
   }
 
   /** Access the underlying HTTP client for advanced API calls. */

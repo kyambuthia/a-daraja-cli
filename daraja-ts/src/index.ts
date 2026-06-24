@@ -1,9 +1,15 @@
 export { Daraja } from "./daraja.js";
 export { DarajaError } from "./error.js";
 export type {
+  BalanceOptions,
+  B2cCommand,
+  ConversationResponse,
   Credentials,
   Environment,
   PromptOptions,
+  QueryOptions,
+  RefundOptions,
+  SendOptions,
   StkCallbackBody,
   StkPushResponse,
   StkTransactionType,
@@ -13,4 +19,5 @@ export {
   stkCallbackMetadata,
   stkCallbackPaid,
 } from "./webhook.js";
+export { certificatePath } from "./certs.js";
 export { normalizePhone } from "./security.js";

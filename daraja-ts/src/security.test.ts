@@ -1,6 +1,12 @@
+import {
+  constants,
+  generateKeyPairSync,
+  privateDecrypt,
+} from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   currentTimestamp,
+  generateSecurityCredential,
   generateStkPassword,
   normalizePhone,
 } from "./security.js";
@@ -24,5 +30,29 @@ describe("security", () => {
     expect(normalizePhone("0712345678")).toBe("254712345678");
     expect(normalizePhone("+254712345678")).toBe("254712345678");
     expect(normalizePhone("254712345678")).toBe("254712345678");
+  });
+
+  it("generates RSA security credential from public key PEM", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+    });
+    const password = "Safaricom999!*!";
+    const credential = generateSecurityCredential(password, publicKey.export({
+      type: "spki",
+      format: "pem",
+    }) as string);
+
+    const decoded = Buffer.from(credential, "base64");
+    const decrypted = privateDecrypt(
+      { key: privateKey, padding: constants.RSA_PKCS1_PADDING },
+      decoded
+    );
+    expect(decrypted.toString("utf8")).toBe(password);
+  });
+
+  it("rejects invalid certificate PEM", () => {
+    expect(() => generateSecurityCredential("pass", "not a pem")).toThrow(
+      "Failed to parse certificate PEM"
+    );
   });
 });
