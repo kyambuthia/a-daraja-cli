@@ -2,6 +2,7 @@
 //
 // Send money from your business/PayBill to a phone number.
 
+use crate::api::common::initiator_security_credential;
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
 use crate::types::{B2cCommand, B2cRequest};
@@ -21,17 +22,6 @@ pub struct B2cResponse {
     pub response_description: String,
 }
 
-/// Placeholder SecurityCredential for testing request shape.
-///
-/// Production: RSA-encrypt the initiator password with the Safaricom public
-/// certificate, then base64-encode the ciphertext.
-fn security_credential_placeholder(initiator_password: &str) -> String {
-    base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        initiator_password,
-    )
-}
-
 /// Send a B2C payment.
 pub async fn b2c_payment(
     client: &DarajaClient,
@@ -49,14 +39,10 @@ pub async fn b2c_payment(
         .initiator_name
         .as_ref()
         .ok_or_else(|| DarajaError::Config("initiator_name is not configured".into()))?;
-    let initiator_password = creds
-        .initiator_password
-        .as_ref()
-        .ok_or_else(|| DarajaError::Config("initiator_password is not configured".into()))?;
 
     let request = B2cRequest {
         initiator_name: initiator_name.to_string(),
-        security_credential: security_credential_placeholder(initiator_password),
+        security_credential: initiator_security_credential(client)?,
         command_id: command.as_str().into(),
         amount: amount.to_string(),
         party_a: creds.shortcode.clone(),
@@ -94,7 +80,6 @@ mod tests {
 
     #[test]
     fn command_ids_are_valid() {
-        // B2C must use one of the three valid CommandID values
         let valid = ["BusinessPayment", "SalaryPayment", "PromotionPayment"];
         assert!(valid.contains(&B2cCommand::BusinessPayment.as_str()));
         assert!(valid.contains(&B2cCommand::SalaryPayment.as_str()));
@@ -102,17 +87,30 @@ mod tests {
     }
 
     #[test]
-    fn security_credential_placeholder_base64_encodes_password() {
-        let encoded = security_credential_placeholder("Safaricom999!*!");
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &encoded,
-        )
-        .unwrap();
-        assert_eq!(String::from_utf8(decoded).unwrap(), "Safaricom999!*!");
-    }
+    fn initiator_security_credential_uses_rsa_not_plain_base64() {
+        use crate::config::Credentials;
+        use crate::types::Environment;
+        use zeroize::Zeroizing;
 
-    // ── Async: integration tests ─────────────────────────────
+        let creds = Credentials {
+            consumer_key: Zeroizing::new("ck".into()),
+            consumer_secret: Zeroizing::new("cs".into()),
+            passkey: Zeroizing::new("pk".into()),
+            shortcode: "174379".into(),
+            initiator_name: Some(Zeroizing::new("apitest".into())),
+            initiator_password: Some(Zeroizing::new("Safaricom999!*!".into())),
+        };
+        let client = DarajaClient::new(creds, Environment::Sandbox)
+            .unwrap()
+            .without_idempotency();
+
+        let credential = initiator_security_credential(&client).unwrap();
+        let plain = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "Safaricom999!*!",
+        );
+        assert_ne!(credential, plain);
+    }
 
     #[cfg(test)]
     mod async_tests {
@@ -162,7 +160,8 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri());
+                .with_base_url(server.uri())
+                .without_idempotency();
 
             let resp = b2c_payment(
                 &client,

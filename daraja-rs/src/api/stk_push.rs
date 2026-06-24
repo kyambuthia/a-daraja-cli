@@ -5,7 +5,7 @@
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
 use crate::security::{current_timestamp, generate_password};
-use crate::types::{StkPushRequest, StkPushResponse};
+use crate::types::{StkPushRequest, StkPushResponse, StkTransactionType};
 use serde::Serialize;
 
 /// Initiate an STK Push to a customer's phone.
@@ -35,6 +35,28 @@ pub async fn stk_push(
     account_reference: &str,
     callback_url: &str,
 ) -> Result<StkPushResponse, DarajaError> {
+    stk_push_with_type(
+        client,
+        phone,
+        amount,
+        description,
+        account_reference,
+        callback_url,
+        StkTransactionType::PayBill,
+    )
+    .await
+}
+
+/// Initiate an STK Push with an explicit transaction type (PayBill or Till).
+pub async fn stk_push_with_type(
+    client: &DarajaClient,
+    phone: &str,
+    amount: u64,
+    description: &str,
+    account_reference: &str,
+    callback_url: &str,
+    transaction_type: StkTransactionType,
+) -> Result<StkPushResponse, DarajaError> {
     let shortcode = &client.credentials.shortcode;
     let passkey = client.credentials.passkey.as_str();
     let timestamp = current_timestamp();
@@ -44,7 +66,7 @@ pub async fn stk_push(
         business_short_code: shortcode.clone(),
         password,
         timestamp,
-        transaction_type: "CustomerPayBillOnline".into(),
+        transaction_type: transaction_type.as_str().into(),
         amount: amount.to_string(),
         party_a: phone.into(),
         party_b: shortcode.clone(),
@@ -189,7 +211,8 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri());
+                .with_base_url(server.uri())
+                .without_idempotency();
             let resp = stk_push(
                 &client,
                 "254712345678",
@@ -223,7 +246,8 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri());
+                .with_base_url(server.uri())
+                .without_idempotency();
             let result = stk_push(
                 &client, "254712345678", 100, "test", "ref", "https://cb",
             ).await;

@@ -2,6 +2,7 @@
 // The single entry point: `Daraja::from_env()` or `Daraja::from_key(key)`
 
 pub mod auth;
+pub mod certs;
 pub mod client;
 pub mod config;
 pub mod error;

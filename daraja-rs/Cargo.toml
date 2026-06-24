@@ -20,6 +20,7 @@ zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 # Idempotency
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
 rusqlite = { version = "0.31", features = ["bundled"] }
 # Error handling
 thiserror = "2"

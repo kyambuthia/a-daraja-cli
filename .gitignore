@@ -1,1 +1,12 @@
 /target
+
+# Local credentials and runtime caches — never commit
+.env
+.env.*
+*.enc
+**/key
+idempotency.db
+.config/
+
+# User production cert if copied into the repo by mistake
+production.cer

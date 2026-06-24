@@ -174,6 +174,24 @@ pub struct ReversalRequest {
     pub occasion: String,
 }
 
+/// STK Push transaction type (PayBill vs Till).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StkTransactionType {
+    /// PayBill — `CustomerPayBillOnline`
+    PayBill,
+    /// Till / Buy Goods — `CustomerBuyGoodsOnline`
+    Till,
+}
+
+impl StkTransactionType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StkTransactionType::PayBill => "CustomerPayBillOnline",
+            StkTransactionType::Till => "CustomerBuyGoodsOnline",
+        }
+    }
+}
+
 /// B2C CommandID values.
 pub enum B2cCommand {
     BusinessPayment,

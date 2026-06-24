@@ -70,9 +70,10 @@ async fn full_pipeline_init_to_stk_push() {
     // Build client manually pointing at mock server
     let client = DarajaClient::new(creds, Environment::Sandbox)
         .unwrap()
-        .with_base_url(server.uri());
+        .with_base_url(server.uri())
+        .without_idempotency();
 
-    // Step 4: Call stk_push — this is what `mpesa stk` does
+    // Step 4: Call stk_push — this is what `pesaraja stk` does
     let resp = stk_push(
         &client,
         "254712345678",
@@ -103,7 +104,8 @@ async fn pipeline_auth_failure_propagates_error() {
     let creds = test_credentials();
     let client = DarajaClient::new(creds, Environment::Sandbox)
         .unwrap()
-        .with_base_url(server.uri());
+        .with_base_url(server.uri())
+        .without_idempotency();
 
     let result = stk_push(
         &client,
@@ -141,7 +143,8 @@ async fn pipeline_stk_push_fails_with_error_response() {
     let creds = test_credentials();
     let client = DarajaClient::new(creds, Environment::Sandbox)
         .unwrap()
-        .with_base_url(server.uri());
+        .with_base_url(server.uri())
+        .without_idempotency();
 
     let result = stk_push(
         &client,

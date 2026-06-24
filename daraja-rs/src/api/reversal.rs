@@ -2,6 +2,7 @@
 //
 // Reverse a completed M-Pesa transaction.
 
+use crate::api::common::{initiator_name, initiator_security_credential};
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
 use crate::types::ReversalRequest;
@@ -22,17 +23,6 @@ pub struct ReversalResponse {
     pub response_description: String,
 }
 
-/// Placeholder SecurityCredential for testing request shape.
-///
-/// Production: RSA-encrypt the initiator password with the Safaricom public
-/// certificate, then base64-encode the ciphertext.
-fn security_credential_placeholder(initiator_password: &str) -> String {
-    base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        initiator_password,
-    )
-}
-
 /// Reverse a completed transaction.
 pub async fn reverse_transaction(
     client: &DarajaClient,
@@ -45,20 +35,9 @@ pub async fn reverse_transaction(
     result_url: &str,
     timeout_url: &str,
 ) -> Result<ReversalResponse, DarajaError> {
-    let creds = &client.credentials;
-
-    let initiator = creds
-        .initiator_name
-        .as_ref()
-        .ok_or_else(|| DarajaError::Config("initiator_name is not configured".into()))?;
-    let initiator_password = creds
-        .initiator_password
-        .as_ref()
-        .ok_or_else(|| DarajaError::Config("initiator_password is not configured".into()))?;
-
     let request = ReversalRequest {
-        initiator: initiator.to_string(),
-        security_credential: security_credential_placeholder(initiator_password),
+        initiator: initiator_name(client)?,
+        security_credential: initiator_security_credential(client)?,
         command_id: COMMAND_ID.into(),
         transaction_id: transaction_id.into(),
         amount: amount.to_string(),
@@ -86,19 +65,6 @@ mod tests {
     fn command_id_is_transaction_reversal() {
         assert_eq!(COMMAND_ID, "TransactionReversal");
     }
-
-    #[test]
-    fn security_credential_placeholder_base64_encodes_password() {
-        let encoded = security_credential_placeholder("Safaricom999!*!");
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &encoded,
-        )
-        .unwrap();
-        assert_eq!(String::from_utf8(decoded).unwrap(), "Safaricom999!*!");
-    }
-
-    // ── Async: integration tests ─────────────────────────────
 
     #[cfg(test)]
     mod async_tests {
@@ -163,7 +129,8 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri());
+                .with_base_url(server.uri())
+                .without_idempotency();
 
             let resp = reverse_transaction(
                 &client,

@@ -10,7 +10,9 @@
 use crate::error::DarajaError;
 use base64::Engine;
 use rand::rngs::OsRng;
-use rsa::{pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
+use crate::certs::certificate_pem;
+use crate::types::Environment;
+use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use std::convert::TryFrom;
 use x509_cert::{
     certificate::Certificate,
@@ -21,6 +23,15 @@ use x509_cert::{
 ///
 /// Parses the Safaricom API certificate (sandbox or production), RSA-encrypts
 /// the initiator password with PKCS#1 v1.5, and base64-encodes the ciphertext.
+/// Build a Daraja SecurityCredential for the initiator password in the given environment.
+pub fn security_credential_for_environment(
+    initiator_password: &str,
+    environment: Environment,
+) -> Result<String, DarajaError> {
+    let pem = certificate_pem(environment)?;
+    generate_security_credential(initiator_password, &pem)
+}
+
 pub fn generate_security_credential(
     initiator_password: &str,
     certificate_pem: &str,
