@@ -1,16 +1,17 @@
-mod listen;
+mod receive;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daraja_rs::api::balance::query_balance;
 use daraja_rs::api::b2c::b2c_payment;
-use daraja_rs::api::c2b::register_urls;
+use daraja_rs::api::c2b::{register_urls, simulate_c2b};
+use daraja_rs::api::stk_push::{stk_push_query, stk_push_with_type};
 use daraja_rs::api::reversal::reverse_transaction;
 use daraja_rs::api::status::query_status;
-use daraja_rs::api::stk_push::stk_push;
+
 use daraja_rs::auth::TokenManager;
 use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
-use daraja_rs::types::{B2cCommand, Environment};
+use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
 use daraja_rs::webhook::C2bConfirmation;
 use daraja_rs::Daraja;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
@@ -27,8 +28,9 @@ const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
 #[command(
     name = "pesaraja",
     version,
-    about = "M-Pesa payments via Safaricom Daraja — zero ceremony",
-    long_about = None
+    about = "M-Pesa payments — prompt, receive, and send money",
+    long_about = "Collect payments (prompt), receive PayBill payments (receive), \
+                  send money to phones (send), and manage your Daraja setup."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -37,7 +39,175 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Interactive setup wizard — encrypt and store Daraja credentials
+    // ── Collect money from a customer ───────────────────────────
+    /// Send M-Pesa PIN prompt to customer's phone
+    #[command(name = "prompt", visible_alias = "stk")]
+    Prompt {
+        /// Customer phone number (254XXXXXXXXX or 07XXXXXXXX)
+        #[arg(long)]
+        phone: String,
+        /// Amount in KES (whole shillings; decimals are truncated)
+        #[arg(long)]
+        amount: String,
+        /// Payment description shown on the customer's phone
+        #[arg(long, default_value = "Payment")]
+        description: String,
+        /// Your order or invoice reference shown on the prompt
+        #[arg(long, default_value = "Payment")]
+        reference: String,
+        /// URL that receives the payment result (required in production)
+        #[arg(long)]
+        callback_url: Option<String>,
+        /// PayBill or Till: paybill (default) or till
+        #[arg(long = "type", visible_alias = "transaction-type", value_enum, default_value_t = PromptType::Paybill)]
+        payment_type: PromptType,
+        /// Skip the confirmation prompt before sending
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Check if the customer completed a payment prompt
+    #[command(name = "prompt-status", visible_aliases = ["stk-query"])]
+    PromptStatus {
+        /// Checkout ID from a prior prompt (e.g. ws_CO_...)
+        #[arg(long)]
+        checkout_id: String,
+    },
+
+    // ── Receive money (PayBill / C2B) ───────────────────────────
+    /// Listen for incoming PayBill payments (registers URLs in sandbox)
+    #[command(name = "receive", visible_alias = "listen")]
+    Receive {
+        /// Local port to receive callbacks on
+        #[arg(long, default_value_t = 8181)]
+        port: u16,
+    },
+    /// Fake an incoming PayBill payment (sandbox only)
+    Simulate {
+        /// Customer phone number (sandbox test MSISDN)
+        #[arg(long, default_value = "254708374149")]
+        phone: String,
+        /// Amount in KES (whole shillings; decimals are truncated)
+        #[arg(long)]
+        amount: String,
+        /// Bill reference number
+        #[arg(long, default_value = "Test")]
+        reference: String,
+        /// PayBill / Till shortcode (defaults to configured shortcode)
+        #[arg(long)]
+        shortcode: Option<String>,
+    },
+    /// Register PayBill callback URLs with Daraja (advanced)
+    Register {
+        /// PayBill / Till shortcode (defaults to configured shortcode)
+        #[arg(long)]
+        shortcode: Option<String>,
+        /// Response type: Completed or Cancelled
+        #[arg(long, default_value = "Completed")]
+        response_type: String,
+        /// Confirmation URL
+        #[arg(long, default_value = "https://example.com/c2b/confirm")]
+        confirm_url: String,
+        /// Validation URL
+        #[arg(long, default_value = "https://example.com/c2b/validate")]
+        validation_url: String,
+    },
+    /// Send a test callback to your webhook server (advanced)
+    Webhook {
+        /// Base URL of your server (e.g. http://localhost:8181/c2b)
+        url: String,
+        /// Endpoint: confirm (default) or validate
+        endpoint: Option<String>,
+    },
+
+    // ── Send money to someone ───────────────────────────────────
+    /// Pay a phone number — salary, refund, or disbursement
+    Send {
+        /// Recipient phone number
+        #[arg(long)]
+        to: String,
+        /// Amount in KES (whole shillings; decimals are truncated)
+        #[arg(long)]
+        amount: String,
+        /// Payment remarks shown in the transaction
+        #[arg(long, default_value = "Payment")]
+        remarks: String,
+        /// Occasion label (optional)
+        #[arg(long, default_value = "")]
+        occasion: String,
+        /// Payment type: business (default), salary, or promotion
+        #[arg(long = "type", visible_alias = "command", value_enum, default_value_t = SendType::Business)]
+        payment_type: SendType,
+        /// URL that receives the payment result
+        #[arg(long, default_value = DEFAULT_RESULT_URL)]
+        result_url: String,
+        /// URL notified if the request times out
+        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
+        timeout_url: String,
+        /// Skip the confirmation prompt before sending
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
+    // ── Account operations ──────────────────────────────────────
+    /// Look up a transaction by M-Pesa ID
+    #[command(name = "query", visible_alias = "status")]
+    Query {
+        /// M-Pesa transaction ID (e.g. QEJ78H8JKR)
+        #[arg(long)]
+        id: String,
+        /// Remarks for the query
+        #[arg(long, default_value = "Status check")]
+        remarks: String,
+        /// Occasion label (optional)
+        #[arg(long, default_value = "")]
+        occasion: String,
+        /// URL that receives the query result
+        #[arg(long, default_value = DEFAULT_RESULT_URL)]
+        result_url: String,
+        /// URL notified if the request times out
+        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
+        timeout_url: String,
+    },
+    /// Check your M-Pesa account balance
+    Balance {
+        /// URL that receives the balance result
+        #[arg(long, default_value = DEFAULT_RESULT_URL)]
+        result_url: String,
+        /// URL notified if the request times out
+        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
+        timeout_url: String,
+    },
+    /// Reverse a completed payment
+    #[command(name = "refund", visible_alias = "reverse")]
+    Refund {
+        /// M-Pesa transaction ID to reverse
+        #[arg(long)]
+        id: String,
+        /// Amount to refund in KES (whole shillings; decimals are truncated)
+        #[arg(long)]
+        amount: String,
+        /// Receiver party shortcode
+        #[arg(long, default_value = "600000")]
+        receiver: String,
+        /// Receiver identifier type (11 = shortcode)
+        #[arg(long, default_value = "11")]
+        receiver_type: String,
+        /// Refund remarks
+        #[arg(long, default_value = "Refund")]
+        remarks: String,
+        /// Occasion label (optional)
+        #[arg(long, default_value = "")]
+        occasion: String,
+        /// URL that receives the refund result
+        #[arg(long, default_value = DEFAULT_RESULT_URL)]
+        result_url: String,
+        /// URL notified if the request times out
+        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
+        timeout_url: String,
+    },
+
+    // ── Setup ───────────────────────────────────────────────────
+    /// Store Daraja credentials (run once)
     Init {
         /// Environment to configure (skips the interactive prompt when set)
         #[arg(long, value_enum)]
@@ -54,10 +224,10 @@ enum Commands {
         /// PayBill / Till shortcode (non-interactive init)
         #[arg(long)]
         shortcode: Option<String>,
-        /// B2C initiator name (optional, non-interactive init)
+        /// Initiator name for send / query / balance / refund (optional)
         #[arg(long)]
         initiator_name: Option<String>,
-        /// B2C initiator password (optional, non-interactive init)
+        /// Initiator password for send / query / balance / refund (optional)
         #[arg(long)]
         initiator_password: Option<String>,
         /// Error if required flags are missing instead of falling back to prompts
@@ -66,141 +236,10 @@ enum Commands {
     },
     /// Show current configuration (never exposes secrets)
     Config,
-    /// Print the SDK key for shell export: export DARAJA_KEY=$(pesaraja export-key)
+    /// Print the SDK key for CI/CD: export DARAJA_KEY=$(pesaraja export-key)
     ExportKey,
-    /// STK Push — Lipa Na M-Pesa Online
-    Stk {
-        /// Customer phone number (254XXXXXXXXX or 07XXXXXXXX)
-        #[arg(long)]
-        phone: String,
-        /// Amount in KES (whole shillings; decimals are truncated)
-        #[arg(long)]
-        amount: String,
-        /// Payment description shown to the customer
-        #[arg(long, default_value = "Payment")]
-        description: String,
-        /// Account reference shown on the STK prompt
-        #[arg(long, default_value = "Payment")]
-        reference: String,
-        /// Callback URL for STK result (required for production)
-        #[arg(long)]
-        callback_url: Option<String>,
-        /// Skip pre-flight confirmation prompt
-        #[arg(short = 'y', long)]
-        yes: bool,
-    },
-    /// B2C payment — send money to a phone number
-    Send {
-        /// Recipient phone number
-        #[arg(long)]
-        to: String,
-        /// Amount in KES (whole shillings; decimals are truncated)
-        #[arg(long)]
-        amount: String,
-        /// Payment remarks
-        #[arg(long, default_value = "Payment")]
-        remarks: String,
-        /// Occasion label
-        #[arg(long, default_value = "")]
-        occasion: String,
-        /// B2C command type
-        #[arg(long, value_enum, default_value_t = SendCommand::Business)]
-        command: SendCommand,
-        /// Result callback URL
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
-        /// Timeout callback URL
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
-        /// Skip pre-flight confirmation prompt
-        #[arg(short = 'y', long)]
-        yes: bool,
-    },
-    /// Query transaction status
-    Status {
-        /// M-Pesa transaction ID
-        #[arg(long)]
-        id: String,
-        /// Remarks for the query
-        #[arg(long, default_value = "Status check")]
-        remarks: String,
-        /// Occasion label
-        #[arg(long, default_value = "")]
-        occasion: String,
-        /// Result callback URL
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
-        /// Timeout callback URL
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
-    },
-    /// Query M-Pesa account balance
-    Balance {
-        /// Result callback URL
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
-        /// Timeout callback URL
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
-    },
-    /// Reverse a completed transaction
-    Reverse {
-        /// M-Pesa transaction ID to reverse
-        #[arg(long)]
-        id: String,
-        /// Amount to reverse in KES (whole shillings; decimals are truncated)
-        #[arg(long)]
-        amount: String,
-        /// Receiver party shortcode
-        #[arg(long, default_value = "600000")]
-        receiver: String,
-        /// Receiver identifier type (11 = shortcode)
-        #[arg(long, default_value = "11")]
-        receiver_type: String,
-        /// Reversal remarks
-        #[arg(long, default_value = "Reversal")]
-        remarks: String,
-        /// Occasion label
-        #[arg(long, default_value = "")]
-        occasion: String,
-        /// Result callback URL
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
-        /// Timeout callback URL
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
-    },
-    /// Register C2B validation and confirmation URLs
-    Register {
-        /// PayBill / Till shortcode (defaults to configured shortcode)
-        #[arg(long)]
-        shortcode: Option<String>,
-        /// Response type: Completed or Cancelled
-        #[arg(long, default_value = "Completed")]
-        response_type: String,
-        /// Confirmation URL
-        #[arg(long, default_value = "https://example.com/c2b/confirm")]
-        confirm_url: String,
-
-        /// Validation URL (receives C2B validation callbacks)
-        #[arg(long, default_value = "https://example.com/c2b/validate")]
-        validation_url: String,
-    },
-    /// Test C2B webhook endpoints (validation / confirmation)
-    Webhook {
-        /// Base URL of your webhook server (e.g. http://localhost:3000/c2b)
-        url: String,
-        /// Endpoint to hit: confirm (default) or validate
-        endpoint: Option<String>,
-    },
-    /// Production readiness check
+    /// Pre-flight check before going live
     Doctor,
-    /// Local C2B callback dev server — register URLs and print webhooks
-    Listen {
-        /// Port to listen on
-        #[arg(long, default_value_t = 8181)]
-        port: u16,
-    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -210,18 +249,33 @@ enum InitEnvironment {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-enum SendCommand {
+enum PromptType {
+    Paybill,
+    Till,
+}
+
+impl PromptType {
+    fn to_stk_transaction_type(self) -> StkTransactionType {
+        match self {
+            PromptType::Paybill => StkTransactionType::PayBill,
+            PromptType::Till => StkTransactionType::Till,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SendType {
     Business,
     Salary,
     Promotion,
 }
 
-impl SendCommand {
+impl SendType {
     fn to_b2c_command(self) -> B2cCommand {
         match self {
-            SendCommand::Business => B2cCommand::BusinessPayment,
-            SendCommand::Salary => B2cCommand::SalaryPayment,
-            SendCommand::Promotion => B2cCommand::PromotionPayment,
+            SendType::Business => B2cCommand::BusinessPayment,
+            SendType::Salary => B2cCommand::SalaryPayment,
+            SendType::Promotion => B2cCommand::PromotionPayment,
         }
     }
 }
@@ -488,38 +542,59 @@ async fn run() -> Result<(), DarajaError> {
         }
         Commands::Config => cmd_config().await,
         Commands::ExportKey => cmd_export_key().await,
-        Commands::Stk {
+        Commands::Prompt {
             phone,
             amount,
             description,
             reference,
             callback_url,
+            payment_type,
             yes,
-        } => cmd_stk(phone, amount, description, reference, callback_url, yes).await,
+        } => {
+            cmd_prompt(
+                phone,
+                amount,
+                description,
+                reference,
+                callback_url,
+                payment_type,
+                yes,
+            )
+            .await
+        }
+        Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id).await,
+        Commands::Receive { port } => receive::run(port).await,
+        Commands::Simulate {
+            phone,
+            amount,
+            reference,
+            shortcode,
+        } => cmd_simulate(phone, amount, reference, shortcode).await,
         Commands::Send {
             to,
             amount,
             remarks,
             occasion,
-            command,
+            payment_type,
             result_url,
             timeout_url,
             yes,
         } => {
-            cmd_send(to, amount, remarks, occasion, command, result_url, timeout_url, yes).await
+            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes)
+                .await
         }
-        Commands::Status {
+        Commands::Query {
             id,
             remarks,
             occasion,
             result_url,
             timeout_url,
-        } => cmd_status(id, remarks, occasion, result_url, timeout_url).await,
+        } => cmd_query(id, remarks, occasion, result_url, timeout_url).await,
         Commands::Balance {
             result_url,
             timeout_url,
         } => cmd_balance(result_url, timeout_url).await,
-        Commands::Reverse {
+        Commands::Refund {
             id,
             amount,
             receiver,
@@ -530,7 +605,7 @@ async fn run() -> Result<(), DarajaError> {
             timeout_url,
         } => {
             let amount = parse_kes_amount(&amount)?;
-            cmd_reverse(
+            cmd_refund(
                 id,
                 amount,
                 receiver,
@@ -558,7 +633,6 @@ async fn run() -> Result<(), DarajaError> {
         }
         Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint).await,
         Commands::Doctor => cmd_doctor().await,
-        Commands::Listen { port } => listen::run(port).await,
     }
 }
 
@@ -716,7 +790,7 @@ fn prompt_credentials_interactive(
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
 
     println!();
-    println!("  For B2C / transaction status / reversal (optional):");
+    println!("  For send / query / balance / refund (optional):");
     println!();
 
     let had_initiator = defaults
@@ -800,6 +874,10 @@ fn print_init_success(env_label: &str, sdk_key: &str) -> Result<(), DarajaError>
     if env_label == "sandbox" {
         println!("  Add production credentials later with:");
         println!("    pesaraja init --env production");
+    } else {
+        println!("  For send / query / balance / refund in production, save the");
+        println!("  Safaricom API certificate from the Daraja portal to:");
+        println!("    ~/.config/daraja/production.cer");
     }
     println!();
     Ok(())
@@ -937,12 +1015,13 @@ pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
     Ok(creds.shortcode)
 }
 
-async fn cmd_stk(
+async fn cmd_prompt(
     phone: String,
     amount: String,
     description: String,
     reference: String,
     callback_url: Option<String>,
+    payment_type: PromptType,
     yes: bool,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
@@ -967,17 +1046,18 @@ async fn cmd_stk(
     confirm_payment(&phone, amount, &description, yes)?;
     println!();
 
-    let resp = stk_push(
+    let resp = stk_push_with_type(
         daraja.client(),
         &phone,
         amount,
         &description,
         &reference,
         &callback,
+        payment_type.to_stk_transaction_type(),
     )
     .await?;
 
-    println!("✓ STK Push initiated");
+    println!("✓ Payment prompt sent");
     println!();
     println!("  Merchant Request ID:  {}", resp.merchant_request_id);
     println!("  Checkout Request ID:  {}", resp.checkout_request_id);
@@ -989,12 +1069,71 @@ async fn cmd_stk(
     Ok(())
 }
 
+async fn cmd_prompt_status(checkout_id: String) -> Result<(), DarajaError> {
+    let daraja = load_daraja().await?;
+
+    let resp = stk_push_query(daraja.client(), &checkout_id).await?;
+
+    println!("✓ Prompt status retrieved");
+    println!();
+    println!("  Merchant Request ID:  {}", resp.merchant_request_id);
+    println!("  Checkout Request ID:  {}", resp.checkout_request_id);
+    println!("  Response Code:        {}", resp.response_code);
+    println!("  Response Description: {}", resp.response_description);
+    println!("  Customer Message:     {}", resp.customer_message);
+    println!();
+
+    Ok(())
+}
+
+async fn cmd_simulate(
+    phone: String,
+    amount: String,
+    reference: String,
+    shortcode: Option<String>,
+) -> Result<(), DarajaError> {
+    let sdk_key = load_sdk_key()?;
+    if sdk_key.starts_with("dsk_live_") {
+        return Err(DarajaError::Config(
+            "C2B simulate is sandbox-only — switch to a dsk_test_ key".into(),
+        ));
+    }
+
+    let amount = parse_kes_amount(&amount)?;
+    let daraja = load_daraja().await?;
+    let shortcode = match shortcode {
+        Some(code) => code,
+        None => load_shortcode()?,
+    };
+    let phone = normalize_phone(&phone);
+
+    let resp = simulate_c2b(
+        daraja.client(),
+        &shortcode,
+        amount,
+        &phone,
+        &reference,
+    )
+    .await?;
+
+    println!("✓ C2B payment simulated");
+    println!();
+    println!("  Conversation ID:           {}", resp.conversation_id);
+    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+    println!("  Response Description:      {}", resp.response_description);
+    println!();
+    println!("  Run `pesaraja receive` to catch the confirmation callback.");
+    println!();
+
+    Ok(())
+}
+
 async fn cmd_send(
     to: String,
     amount: String,
     remarks: String,
     occasion: String,
-    command: SendCommand,
+    payment_type: SendType,
     result_url: String,
     timeout_url: String,
     yes: bool,
@@ -1011,7 +1150,7 @@ async fn cmd_send(
         daraja.client(),
         &phone,
         amount,
-        command.to_b2c_command(),
+        payment_type.to_b2c_command(),
         &remarks,
         &occasion,
         &result_url,
@@ -1019,7 +1158,7 @@ async fn cmd_send(
     )
     .await?;
 
-    println!("✓ B2C payment initiated");
+    println!("✓ Payment sent");
     println!();
     println!("  Conversation ID:           {}", resp.conversation_id);
     println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
@@ -1030,7 +1169,7 @@ async fn cmd_send(
     Ok(())
 }
 
-async fn cmd_status(
+async fn cmd_query(
     id: String,
     remarks: String,
     occasion: String,
@@ -1049,7 +1188,7 @@ async fn cmd_status(
     )
     .await?;
 
-    println!("✓ Transaction status query sent");
+    println!("✓ Transaction query sent");
     println!();
     println!("  Conversation ID:           {}", resp.conversation_id);
     println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
@@ -1077,7 +1216,7 @@ async fn cmd_balance(result_url: String, timeout_url: String) -> Result<(), Dara
     Ok(())
 }
 
-async fn cmd_reverse(
+async fn cmd_refund(
     id: String,
     amount: u64,
     receiver: String,
@@ -1102,7 +1241,7 @@ async fn cmd_reverse(
     )
     .await?;
 
-    println!("✓ Reversal initiated");
+    println!("✓ Refund initiated");
     println!();
     println!("  Conversation ID:           {}", resp.conversation_id);
     println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
@@ -1134,7 +1273,12 @@ async fn cmd_webhook(url: String, endpoint: Option<String>) -> Result<(), Daraja
         )));
     }
 
-    let target = format!("{}/{}", url.trim_end_matches('/'), endpoint);
+    let base = url.trim_end_matches('/');
+    let target = if base.ends_with("/confirm") || base.ends_with("/validate") {
+        base.to_string()
+    } else {
+        format!("{base}/{endpoint}")
+    };
     let body = sample_c2b_confirmation();
     let json = serde_json::to_string(&body).map_err(|e| {
         DarajaError::Config(format!("failed to serialize sample payload: {e}"))
@@ -1328,7 +1472,7 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
                                     ok: false,
                                     message: "Initiator credentials not configured".into(),
                                     hint: Some(
-                                        "Required for B2C, status, balance, and reversal. \
+                                        "Required for send, query, balance, and refund. \
                                          Re-run `pesaraja init` and add initiator details."
                                             .into(),
                                     ),
@@ -1338,14 +1482,14 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
                             if is_sandbox {
                                 checks.push(CheckItem {
                                     ok: false,
-                                    message: "B2C: not available in sandbox (needs Go Live)"
+                                    message: "send: not available in sandbox (needs Go Live)"
                                         .into(),
                                     hint: None,
                                 });
                             } else if has_initiator {
                                 checks.push(CheckItem {
                                     ok: true,
-                                    message: "B2C: credentials ready".into(),
+                                    message: "send: credentials ready".into(),
                                     hint: None,
                                 });
                             }
@@ -1388,6 +1532,34 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
             ok: true,
             message: "Production environment configured (dsk_live_)".into(),
             hint: None,
+        });
+
+        let cert_ok = std::env::var("DARAJA_CERT_PATH")
+            .map(|p| std::path::Path::new(&p).exists())
+            .unwrap_or_else(|_| {
+                std::env::var("HOME")
+                    .map(|home| {
+                        std::path::Path::new(&format!("{home}/.config/daraja/production.cer"))
+                            .exists()
+                    })
+                    .unwrap_or(false)
+            });
+        checks.push(CheckItem {
+            ok: cert_ok,
+            message: if cert_ok {
+                "Production API certificate found".into()
+            } else {
+                "Production API certificate not found".into()
+            },
+            hint: if cert_ok {
+                None
+            } else {
+                Some(
+                    "Download from the Daraja portal and save to \
+                     ~/.config/daraja/production.cer (or set DARAJA_CERT_PATH)."
+                        .into(),
+                )
+            },
         });
     }
 

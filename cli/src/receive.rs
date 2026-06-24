@@ -45,11 +45,11 @@ pub async fn run(port: u16) -> Result<(), DarajaError> {
 
     if is_sandbox {
         println!("✗ Your server must be reachable from the internet for production.");
-        println!("  In sandbox, C2B simulate will work locally.");
+        println!("  In sandbox, run `pesaraja simulate` to deliver test payments here.");
     }
 
     println!();
-    println!("Waiting for callbacks...");
+    println!("Waiting for incoming payments...");
     println!();
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
