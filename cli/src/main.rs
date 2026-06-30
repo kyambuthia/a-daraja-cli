@@ -69,6 +69,9 @@ enum Commands {
         /// Skip the confirmation prompt before sending
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show the request that would be sent without calling Daraja.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Check if the customer completed a payment prompt
     #[command(name = "prompt-status", visible_aliases = ["stk-query"])]
@@ -151,6 +154,9 @@ enum Commands {
         /// Skip the confirmation prompt before sending
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show the request that would be sent without calling Daraja.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     // ── Account operations ──────────────────────────────────────
@@ -209,6 +215,9 @@ enum Commands {
         /// URL notified if the request times out
         #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
         timeout_url: String,
+        /// Show the request that would be sent without calling Daraja.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     // ── Setup ───────────────────────────────────────────────────
@@ -445,6 +454,17 @@ fn confirm_payment(
     Ok(())
 }
 
+fn print_dry_run(title: &str, fields: &[(&str, String)]) {
+    println!("↯ Dry run: {title}");
+    println!();
+    for (label, value) in fields {
+        println!("  {label}: {value}");
+    }
+    println!();
+    println!("  No request was sent.");
+    println!();
+}
+
 fn theme() -> ColorfulTheme {
     ColorfulTheme::default()
 }
@@ -555,6 +575,7 @@ async fn run() -> Result<(), DarajaError> {
             callback_url,
             payment_type,
             yes,
+            dry_run,
         } => {
             cmd_prompt(
                 phone,
@@ -564,6 +585,7 @@ async fn run() -> Result<(), DarajaError> {
                 callback_url,
                 payment_type,
                 yes,
+                dry_run,
             )
             .await
         }
@@ -584,8 +606,9 @@ async fn run() -> Result<(), DarajaError> {
             result_url,
             timeout_url,
             yes,
+            dry_run,
         } => {
-            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes, cli.json)
+            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes, dry_run, cli.json)
                 .await
         }
         Commands::Query {
@@ -608,6 +631,7 @@ async fn run() -> Result<(), DarajaError> {
             occasion,
             result_url,
             timeout_url,
+            dry_run,
         } => {
             let amount = parse_kes_amount(&amount)?;
             cmd_refund(
@@ -619,6 +643,7 @@ async fn run() -> Result<(), DarajaError> {
                 occasion,
                 result_url,
                 timeout_url,
+                dry_run,
             )
             .await
         }
@@ -627,16 +652,15 @@ async fn run() -> Result<(), DarajaError> {
             response_type,
             confirm_url,
             validation_url,
-        } => {
-            cmd_register(
-                shortcode,
-                response_type,
-                confirm_url,
-                validation_url,
-            )
-            .await
-        }
-        Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint).await,
+        } => cmd_register(
+            shortcode,
+            response_type,
+            confirm_url,
+            validation_url,
+            cli.json,
+        )
+        .await,
+        Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint, cli.json).await,
         Commands::Doctor => cmd_doctor(cli.json).await,
     }
 }
@@ -1068,9 +1092,9 @@ async fn cmd_prompt(
     callback_url: Option<String>,
     payment_type: PromptType,
     yes: bool,
+    dry_run: bool,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
-    let daraja = load_daraja().await?;
     let phone = normalize_phone(&phone);
 
     let callback = match callback_url {
@@ -1087,6 +1111,28 @@ async fn cmd_prompt(
         }
     };
 
+    if dry_run {
+        print_dry_run(
+            "STK Push",
+            &[
+                ("Phone", phone.clone()),
+                ("Amount", format!("KES {amount}")),
+                ("Description", description.clone()),
+                ("Reference", reference.clone()),
+                ("Callback URL", callback.clone()),
+                (
+                    "Type",
+                    match payment_type {
+                        PromptType::Paybill => "paybill".into(),
+                        PromptType::Till => "till".into(),
+                    },
+                ),
+            ],
+        );
+        return Ok(());
+    }
+
+    let daraja = load_daraja().await?;
     println!();
     confirm_payment(&phone, amount, &description, yes)?;
     println!();
@@ -1209,12 +1255,36 @@ async fn cmd_send(
     result_url: String,
     timeout_url: String,
     yes: bool,
+    dry_run: bool,
     json: bool,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
-    let daraja = load_daraja().await?;
     let phone = normalize_phone(&to);
 
+    if dry_run {
+        print_dry_run(
+            "B2C payment",
+            &[
+                ("Phone", phone.clone()),
+                ("Amount", format!("KES {amount}")),
+                ("Remarks", remarks.clone()),
+                ("Occasion", occasion.clone()),
+                (
+                    "Type",
+                    match payment_type {
+                        SendType::Business => "business".into(),
+                        SendType::Salary => "salary".into(),
+                        SendType::Promotion => "promotion".into(),
+                    },
+                ),
+                ("Result URL", result_url.clone()),
+                ("Timeout URL", timeout_url.clone()),
+            ],
+        );
+        return Ok(());
+    }
+
+    let daraja = load_daraja().await?;
     println!();
     confirm_payment(&phone, amount, &remarks, yes)?;
     println!();
@@ -1339,7 +1409,25 @@ async fn cmd_refund(
     occasion: String,
     result_url: String,
     timeout_url: String,
+    dry_run: bool,
 ) -> Result<(), DarajaError> {
+    if dry_run {
+        print_dry_run(
+            "Reversal / refund",
+            &[
+                ("Transaction ID", id.clone()),
+                ("Amount", format!("KES {amount}")),
+                ("Receiver Party", receiver.clone()),
+                ("Receiver Identifier Type", receiver_type.clone()),
+                ("Remarks", remarks.clone()),
+                ("Occasion", occasion.clone()),
+                ("Result URL", result_url.clone()),
+                ("Timeout URL", timeout_url.clone()),
+            ],
+        );
+        return Ok(());
+    }
+
     let daraja = load_daraja().await?;
 
     let resp = reverse_transaction(
@@ -1379,7 +1467,7 @@ fn sample_c2b_confirmation() -> C2bConfirmation {
     }
 }
 
-async fn cmd_webhook(url: String, endpoint: Option<String>) -> Result<(), DarajaError> {
+async fn cmd_webhook(url: String, endpoint: Option<String>, json: bool) -> Result<(), DarajaError> {
     let endpoint = endpoint.as_deref().unwrap_or("confirm");
     if endpoint != "confirm" && endpoint != "validate" {
         return Err(DarajaError::Config(format!(
@@ -1394,7 +1482,7 @@ async fn cmd_webhook(url: String, endpoint: Option<String>) -> Result<(), Daraja
         format!("{base}/{endpoint}")
     };
     let body = sample_c2b_confirmation();
-    let json = serde_json::to_string(&body).map_err(|e| {
+    let payload = serde_json::to_string(&body).map_err(|e| {
         DarajaError::Config(format!("failed to serialize sample payload: {e}"))
     })?;
 
@@ -1402,7 +1490,7 @@ async fn cmd_webhook(url: String, endpoint: Option<String>) -> Result<(), Daraja
         .post(&target)
         .header("Content-Type", "application/json")
         .header("X-Safaricom-Signature", "test-signature")
-        .body(json)
+        .body(payload)
         .send()
         .await
         .map_err(|e| DarajaError::Network(e.to_string()))?;
@@ -1413,12 +1501,24 @@ async fn cmd_webhook(url: String, endpoint: Option<String>) -> Result<(), Daraja
         .await
         .map_err(|e| DarajaError::Network(e.to_string()))?;
 
-    println!();
-    println!("  Endpoint: {target}");
-    println!("  Status:   {status}");
-    println!("  Body:");
-    println!("  {response_body}");
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "endpoint": target,
+                "status": status.as_u16(),
+                "body": response_body,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!();
+        println!("  Endpoint: {target}");
+        println!("  Status:   {status}");
+        println!("  Body:");
+        println!("  {response_body}");
+        println!();
+    }
 
     Ok(())
 }
@@ -1428,6 +1528,7 @@ async fn cmd_register(
     response_type: String,
     confirm_url: String,
     validation_url: String,
+    json: bool,
 ) -> Result<(), DarajaError> {
     let daraja = load_daraja().await?;
     let shortcode = match shortcode {
@@ -1444,12 +1545,24 @@ async fn cmd_register(
     )
     .await?;
 
-    println!("✓ C2B URLs registered");
-    println!();
-    println!("  Conversation ID:           {}", resp.conversation_id);
-    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
-    println!("  Response Description:      {}", resp.response_description);
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "conversation_id": resp.conversation_id,
+                "originator_conversation_id": resp.originator_conversation_id,
+                "response_description": resp.response_description,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("✓ C2B URLs registered");
+        println!();
+        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!("  Response Description:      {}", resp.response_description);
+        println!();
+    }
 
     Ok(())
 }
