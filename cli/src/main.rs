@@ -34,6 +34,10 @@ const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
                   send money to phones (send), and manage your Daraja setup."
 )]
 struct Cli {
+    /// Emit machine-readable JSON for inspection commands.
+    #[arg(long)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -541,7 +545,7 @@ async fn run() -> Result<(), DarajaError> {
             })
             .await
         }
-        Commands::Config => cmd_config().await,
+        Commands::Config => cmd_config(cli.json).await,
         Commands::ExportKey => cmd_export_key().await,
         Commands::Prompt {
             phone,
@@ -563,14 +567,14 @@ async fn run() -> Result<(), DarajaError> {
             )
             .await
         }
-        Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id).await,
+        Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id, cli.json).await,
         Commands::Receive { port } => receive::run(port).await,
         Commands::Simulate {
             phone,
             amount,
             reference,
             shortcode,
-        } => cmd_simulate(phone, amount, reference, shortcode).await,
+        } => cmd_simulate(phone, amount, reference, shortcode, cli.json).await,
         Commands::Send {
             to,
             amount,
@@ -581,7 +585,7 @@ async fn run() -> Result<(), DarajaError> {
             timeout_url,
             yes,
         } => {
-            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes)
+            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes, cli.json)
                 .await
         }
         Commands::Query {
@@ -590,11 +594,11 @@ async fn run() -> Result<(), DarajaError> {
             occasion,
             result_url,
             timeout_url,
-        } => cmd_query(id, remarks, occasion, result_url, timeout_url).await,
+        } => cmd_query(id, remarks, occasion, result_url, timeout_url, cli.json).await,
         Commands::Balance {
             result_url,
             timeout_url,
-        } => cmd_balance(result_url, timeout_url).await,
+        } => cmd_balance(result_url, timeout_url, cli.json).await,
         Commands::Refund {
             id,
             amount,
@@ -633,7 +637,7 @@ async fn run() -> Result<(), DarajaError> {
             .await
         }
         Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint).await,
-        Commands::Doctor => cmd_doctor().await,
+        Commands::Doctor => cmd_doctor(cli.json).await,
     }
 }
 
@@ -966,10 +970,40 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
     Ok(())
 }
 
-async fn cmd_config() -> Result<(), DarajaError> {
+async fn cmd_config(json: bool) -> Result<(), DarajaError> {
     let creds_path = credentials_path()?;
     let key = load_sdk_key()?;
     let (env_name, env_prefix) = sdk_key_environment(&key).unwrap_or(("unknown", "unknown"));
+
+    if json {
+        let credentials = if creds_path.exists() {
+            match load_credentials() {
+                Ok(creds) => serde_json::json!({
+                    "status": "ok",
+                    "shortcode": creds.shortcode,
+                    "initiator_configured": creds.initiator_name.is_some() && creds.initiator_password.is_some(),
+                }),
+                Err(err) => serde_json::json!({
+                    "status": "unreadable",
+                    "error": err.to_string(),
+                }),
+            }
+        } else {
+            serde_json::json!({
+                "status": "missing",
+            })
+        };
+
+        let output = serde_json::json!({
+            "environment": env_name,
+            "prefix": env_prefix,
+            "credentials_path": creds_path.display().to_string(),
+            "sdk_key_source": key_source_label(),
+            "credentials": credentials,
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        return Ok(());
+    }
 
     println!();
     println!("  Environment: {env_name} ({env_prefix})");
@@ -1080,19 +1114,33 @@ async fn cmd_prompt(
     Ok(())
 }
 
-async fn cmd_prompt_status(checkout_id: String) -> Result<(), DarajaError> {
+async fn cmd_prompt_status(checkout_id: String, json: bool) -> Result<(), DarajaError> {
     let daraja = load_daraja().await?;
 
     let resp = stk_push_query(daraja.client(), &checkout_id).await?;
 
-    println!("✓ Prompt status retrieved");
-    println!();
-    println!("  Merchant Request ID:  {}", resp.merchant_request_id);
-    println!("  Checkout Request ID:  {}", resp.checkout_request_id);
-    println!("  Response Code:        {}", resp.response_code);
-    println!("  Response Description: {}", resp.response_description);
-    println!("  Customer Message:     {}", resp.customer_message);
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "merchant_request_id": resp.merchant_request_id,
+                "checkout_request_id": resp.checkout_request_id,
+                "response_code": resp.response_code,
+                "response_description": resp.response_description,
+                "customer_message": resp.customer_message,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("✓ Prompt status retrieved");
+        println!();
+        println!("  Merchant Request ID:  {}", resp.merchant_request_id);
+        println!("  Checkout Request ID:  {}", resp.checkout_request_id);
+        println!("  Response Code:        {}", resp.response_code);
+        println!("  Response Description: {}", resp.response_description);
+        println!("  Customer Message:     {}", resp.customer_message);
+        println!();
+    }
 
     Ok(())
 }
@@ -1102,6 +1150,7 @@ async fn cmd_simulate(
     amount: String,
     reference: String,
     shortcode: Option<String>,
+    json: bool,
 ) -> Result<(), DarajaError> {
     let sdk_key = load_sdk_key()?;
     if sdk_key.starts_with("dsk_live_") {
@@ -1127,14 +1176,26 @@ async fn cmd_simulate(
     )
     .await?;
 
-    println!("✓ C2B payment simulated");
-    println!();
-    println!("  Conversation ID:           {}", resp.conversation_id);
-    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
-    println!("  Response Description:      {}", resp.response_description);
-    println!();
-    println!("  Run `pesaraja receive` to catch the confirmation callback.");
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "conversation_id": resp.conversation_id,
+                "originator_conversation_id": resp.originator_conversation_id,
+                "response_description": resp.response_description,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("✓ C2B payment simulated");
+        println!();
+        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!("  Response Description:      {}", resp.response_description);
+        println!();
+        println!("  Run `pesaraja receive` to catch the confirmation callback.");
+        println!();
+    }
 
     Ok(())
 }
@@ -1148,6 +1209,7 @@ async fn cmd_send(
     result_url: String,
     timeout_url: String,
     yes: bool,
+    json: bool,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
     let daraja = load_daraja().await?;
@@ -1169,13 +1231,26 @@ async fn cmd_send(
     )
     .await?;
 
-    println!("✓ Payment sent");
-    println!();
-    println!("  Conversation ID:           {}", resp.conversation_id);
-    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
-    println!("  Response Code:             {}", resp.response_code);
-    println!("  Response Description:      {}", resp.response_description);
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "conversation_id": resp.conversation_id,
+                "originator_conversation_id": resp.originator_conversation_id,
+                "response_code": resp.response_code,
+                "response_description": resp.response_description,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("✓ Payment sent");
+        println!();
+        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!("  Response Code:             {}", resp.response_code);
+        println!("  Response Description:      {}", resp.response_description);
+        println!();
+    }
 
     Ok(())
 }
@@ -1186,6 +1261,7 @@ async fn cmd_query(
     occasion: String,
     result_url: String,
     timeout_url: String,
+    json: bool,
 ) -> Result<(), DarajaError> {
     let daraja = load_daraja().await?;
 
@@ -1199,30 +1275,57 @@ async fn cmd_query(
     )
     .await?;
 
-    println!("✓ Transaction query sent");
-    println!();
-    println!("  Conversation ID:           {}", resp.conversation_id);
-    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
-    println!("  Response Code:             {}", resp.response_code);
-    println!("  Response Description:      {}", resp.response_description);
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "conversation_id": resp.conversation_id,
+                "originator_conversation_id": resp.originator_conversation_id,
+                "response_code": resp.response_code,
+                "response_description": resp.response_description,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("✓ Transaction query sent");
+        println!();
+        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!("  Response Code:             {}", resp.response_code);
+        println!("  Response Description:      {}", resp.response_description);
+        println!();
+    }
 
     Ok(())
 }
 
-async fn cmd_balance(result_url: String, timeout_url: String) -> Result<(), DarajaError> {
+async fn cmd_balance(result_url: String, timeout_url: String, json: bool) -> Result<(), DarajaError> {
     let daraja = load_daraja().await?;
 
     let resp = query_balance(daraja.client(), &result_url, &timeout_url).await?;
 
-    println!("✓ Balance query sent");
-    println!();
-    println!("  Conversation ID:           {}", resp.conversation_id);
-    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
-    println!("  Response Code:             {}", resp.response_code);
-    println!("  Response Description:      {}", resp.response_description);
-    println!("  (Balance arrives asynchronously at your result URL)");
-    println!();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "conversation_id": resp.conversation_id,
+                "originator_conversation_id": resp.originator_conversation_id,
+                "response_code": resp.response_code,
+                "response_description": resp.response_description,
+                "note": "Balance arrives asynchronously at your result URL",
+            }))
+            .unwrap()
+        );
+    } else {
+        println!("✓ Balance query sent");
+        println!();
+        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!("  Response Code:             {}", resp.response_code);
+        println!("  Response Description:      {}", resp.response_description);
+        println!("  (Balance arrives asynchronously at your result URL)");
+        println!();
+    }
 
     Ok(())
 }
@@ -1365,7 +1468,7 @@ fn print_check(item: &CheckItem) {
     }
 }
 
-async fn cmd_doctor() -> Result<(), DarajaError> {
+async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
     let mut checks: Vec<CheckItem> = Vec::new();
 
     let creds_path = credentials_path()?;
@@ -1612,12 +1715,6 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
         ),
     });
 
-    println!();
-    for check in &checks {
-        print_check(check);
-    }
-    println!();
-
     let critical_failed = !creds_exist
         || !key_set
         || checks.iter().any(|c| {
@@ -1626,6 +1723,24 @@ async fn cmd_doctor() -> Result<(), DarajaError> {
                 || c.message.contains("invalid prefix")
                 || c.message.contains("Invalid SDK key")
         });
+
+    if json {
+        let output = serde_json::json!({
+            "critical_failed": critical_failed,
+            "checks": checks.iter().map(|check| serde_json::json!({
+                "ok": check.ok,
+                "message": check.message,
+                "hint": check.hint,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else {
+        println!();
+        for check in &checks {
+            print_check(check);
+        }
+        println!();
+    }
 
     if critical_failed {
         return Err(DarajaError::Config(
