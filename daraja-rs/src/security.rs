@@ -89,6 +89,18 @@ pub fn current_timestamp() -> String {
     format_timestamp(&now)
 }
 
+/// Normalize a Kenyan phone number to Daraja's preferred `254XXXXXXXXX` format.
+///
+/// Accepts inputs like `+2547...`, `07...`, or `2547...`.
+pub fn normalize_phone(phone: &str) -> String {
+    let phone = phone.trim().trim_start_matches('+');
+    if phone.starts_with('0') {
+        format!("254{}", &phone[1..])
+    } else {
+        phone.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +349,25 @@ mod tests {
             }
             other => panic!("expected Encryption error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn normalize_phone_accepts_plus_prefix() {
+        assert_eq!(normalize_phone("+254743121299"), "254743121299");
+    }
+
+    #[test]
+    fn normalize_phone_accepts_zero_prefix() {
+        assert_eq!(normalize_phone("0743121299"), "254743121299");
+    }
+
+    #[test]
+    fn normalize_phone_preserves_international_format() {
+        assert_eq!(normalize_phone("254743121299"), "254743121299");
+    }
+
+    #[test]
+    fn normalize_phone_handles_new_safaricom_prefixes() {
+        assert_eq!(normalize_phone("0112345678"), "254112345678");
     }
 }

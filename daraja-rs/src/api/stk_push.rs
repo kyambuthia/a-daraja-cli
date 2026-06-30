@@ -4,13 +4,13 @@
 
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
-use crate::security::{current_timestamp, generate_password};
+use crate::security::{current_timestamp, generate_password, normalize_phone};
 use crate::types::{StkPushRequest, StkPushResponse, StkTransactionType};
 use serde::Serialize;
 
 /// Initiate an STK Push to a customer's phone.
 ///
-/// `phone` should be in 254XXXXXXXXX format.
+/// `phone` may be in `+254...`, `07...`, `011...`, or `254...` format.
 /// `amount` is in KES (whole numbers only).
 /// `description` maps to `TransactionDesc` in the Daraja request.
 /// `account_reference` is shown to the customer as the payment reference.
@@ -62,15 +62,16 @@ pub async fn stk_push_with_type(
     let timestamp = current_timestamp();
     let password = generate_password(shortcode, passkey, &timestamp);
 
+    let phone = normalize_phone(phone);
     let request = StkPushRequest {
         business_short_code: shortcode.clone(),
         password,
         timestamp,
         transaction_type: transaction_type.as_str().into(),
         amount: amount.to_string(),
-        party_a: phone.into(),
+        party_a: phone.clone(),
         party_b: shortcode.clone(),
-        phone_number: phone.into(),
+        phone_number: phone,
         callback_url: callback_url.into(),
         account_reference: account_reference.into(),
         transaction_desc: description.into(),

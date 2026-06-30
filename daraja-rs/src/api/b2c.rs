@@ -5,6 +5,7 @@
 use crate::api::common::initiator_security_credential;
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
+use crate::security::normalize_phone;
 use crate::types::{B2cCommand, B2cRequest};
 
 const B2C_PAYMENT_PATH: &str = "/mpesa/b2c/v1/paymentrequest";
@@ -46,7 +47,7 @@ pub async fn b2c_payment(
         command_id: command.as_str().into(),
         amount: amount.to_string(),
         party_a: creds.shortcode.clone(),
-        party_b: phone.into(),
+        party_b: normalize_phone(phone),
         remarks: remarks.into(),
         queue_timeout_url: timeout_url.into(),
         result_url: result_url.into(),

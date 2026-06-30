@@ -4,6 +4,7 @@
 
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
+use crate::security::normalize_phone;
 use crate::types::C2bRegisterRequest;
 
 /// C2B Register URL response.
@@ -48,7 +49,7 @@ pub async fn simulate_c2b(
         "ShortCode": shortcode,
         "CommandID": "CustomerPayBillOnline",
         "Amount": amount.to_string(),
-        "Msisdn": msisdn,
+        "Msisdn": normalize_phone(msisdn),
         "BillRefNumber": bill_ref_number,
     });
     client.post("/mpesa/c2b/v1/simulate", &request).await
