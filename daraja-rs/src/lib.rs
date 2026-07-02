@@ -23,6 +23,15 @@ pub struct Daraja {
 }
 
 impl Daraja {
+    /// Create from already-loaded credentials and an explicit environment.
+    pub fn from_credentials(
+        credentials: config::Credentials,
+        environment: Environment,
+    ) -> Result<Self, DarajaError> {
+        let client = DarajaClient::new(credentials, environment)?;
+        Ok(Daraja { client })
+    }
+
     /// Create from `DARAJA_KEY` env var.
     pub fn from_env() -> Result<Self, DarajaError> {
         let key = std::env::var("DARAJA_KEY")

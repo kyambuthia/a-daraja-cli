@@ -1,4 +1,5 @@
 mod receive;
+mod profiles;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daraja_rs::api::balance::query_balance;
@@ -20,6 +21,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use zeroize::Zeroizing;
+
+use profiles::{
+    active_profile, load_active_profile_context, load_registry, profile_credentials_path,
+    profile_summary, save_profile, Profile, ProfileType,
+};
 
 const DEFAULT_CALLBACK: &str = "https://example.com/callback";
 const DEFAULT_RESULT_URL: &str = "https://example.com/result";
@@ -747,6 +753,7 @@ fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, Dara
 
 fn prompt_credentials_interactive(
     env_label: &str,
+    account_label: &str,
     defaults: Option<&Credentials>,
 ) -> Result<Credentials, DarajaError> {
     let consumer_key_default = defaults
@@ -813,7 +820,7 @@ fn prompt_credentials_interactive(
         }
     });
     let shortcode: String = Input::with_theme(&theme())
-        .with_prompt("Shortcode")
+        .with_prompt(account_label)
         .default(default_shortcode)
         .interact_text()
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
@@ -926,6 +933,22 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
         let env_label = init_environment_label(opts.env.expect("checked above"));
         let credentials = credentials_from_init_options(&opts)?;
         let sdk_key = config::generate_sdk_key(init_key_prefix(env_label));
+        let profile = Profile {
+            name: "personal".into(),
+            profile_type: ProfileType::Personal,
+            environment: if env_label == "sandbox" {
+                Environment::Sandbox
+            } else {
+                Environment::Production
+            },
+            merchant_number: credentials.shortcode.clone(),
+            credentials_path: profile_credentials_path("personal")?
+                .display()
+                .to_string(),
+            initiator_configured: credentials.initiator_name.is_some()
+                && credentials.initiator_password.is_some(),
+        };
+        save_profile(&profile, &credentials, &sdk_key)?;
         save_credentials(&credentials, &sdk_key)?;
         if env_label == "sandbox" {
             ensure_sandbox_certificate().await?;
@@ -955,7 +978,7 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
                 .map(|(name, _)| name)
                 .unwrap_or("sandbox");
             let credentials =
-                prompt_credentials_interactive(env_label, Some(creds))?;
+                prompt_credentials_interactive(env_label, "M-Pesa phone number", Some(creds))?;
             save_credentials(&credentials, &key)?;
             if env_label == "sandbox" {
                 ensure_sandbox_certificate().await?;
@@ -984,7 +1007,23 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
         InitAction::Cancelled => unreachable!(),
     };
 
-    let credentials = prompt_credentials_interactive(env_label, None)?;
+    let credentials = prompt_credentials_interactive(env_label, "M-Pesa phone number", None)?;
+    let profile = Profile {
+        name: "personal".into(),
+        profile_type: ProfileType::Personal,
+        environment: if env_label == "sandbox" {
+            Environment::Sandbox
+        } else {
+            Environment::Production
+        },
+        merchant_number: credentials.shortcode.clone(),
+        credentials_path: profile_credentials_path("personal")?
+            .display()
+            .to_string(),
+        initiator_configured: credentials.initiator_name.is_some()
+            && credentials.initiator_password.is_some(),
+    };
+    save_profile(&profile, &credentials, &sdk_key)?;
     save_credentials(&credentials, &sdk_key)?;
     if env_label == "sandbox" {
         ensure_sandbox_certificate().await?;
@@ -998,6 +1037,54 @@ async fn cmd_config(json: bool) -> Result<(), DarajaError> {
     let creds_path = credentials_path()?;
     let key = load_sdk_key()?;
     let (env_name, env_prefix) = sdk_key_environment(&key).unwrap_or(("unknown", "unknown"));
+    let registry = load_registry().unwrap_or_default();
+
+    if !registry.profiles.is_empty() {
+        if json {
+            let output = serde_json::json!({
+                "active_profile": registry.active_profile,
+                "profiles": registry.profiles.iter().map(profile_summary).collect::<Vec<_>>(),
+                "sdk_key_source": key_source_label(),
+            });
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            return Ok(());
+        }
+
+        println!();
+        if let Some(profile) = active_profile(&registry) {
+            println!(
+                "  Active profile: {} ({}, {})",
+                profile.name,
+                profile.profile_type.as_str(),
+                profile.merchant_number
+            );
+        } else {
+            println!("  Active profile: —");
+        }
+        println!();
+        println!("  Profiles:");
+        for profile in &registry.profiles {
+            let active = registry
+                .active_profile
+                .as_deref()
+                .is_some_and(|name| name == profile.name);
+            let marker = if active { "[active]" } else { "" };
+            println!(
+                "  - {} {} {} {} {}",
+                profile.name,
+                marker,
+                profile.profile_type.as_str(),
+                profile.merchant_number,
+                match profile.environment {
+                    Environment::Sandbox => "sandbox",
+                    Environment::Production => "production",
+                }
+            );
+        }
+        println!("  Key source: {}", key_source_label());
+        println!();
+        return Ok(());
+    }
 
     if json {
         let credentials = if creds_path.exists() {
@@ -1067,13 +1154,20 @@ async fn cmd_export_key() -> Result<(), DarajaError> {
 }
 
 pub(crate) async fn load_daraja() -> Result<Daraja, DarajaError> {
+    if let Some((profile, credentials)) = load_active_profile_context()? {
+        return Daraja::from_credentials(credentials, profile.environment);
+    }
+
     let key = load_sdk_key()?;
-    // Set env var so Daraja::from_env() can find it
     unsafe { std::env::set_var("DARAJA_KEY", &key); }
     Daraja::from_env()
 }
 
 pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
+    if let Some((_, credentials)) = load_active_profile_context()? {
+        return Ok(credentials.shortcode);
+    }
+
     let key = load_sdk_key()?;
     let key_bytes = config::extract_key_from_sdk_key(&key)?;
     let path = credentials_path()?;
