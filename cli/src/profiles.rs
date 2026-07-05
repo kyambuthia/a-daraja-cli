@@ -198,9 +198,6 @@ mod tests {
     use super::*;
     use daraja_rs::config::{encrypt_credentials, generate_sdk_key};
     use zeroize::Zeroizing;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_home() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -210,7 +207,7 @@ mod tests {
 
     #[test]
     fn profile_type_as_str_is_stable() {
-        let _guard = TEST_LOCK.lock().expect("test lock");
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         assert_eq!(ProfileType::Personal.as_str(), "personal");
         assert_eq!(ProfileType::Paybill.as_str(), "paybill");
         assert_eq!(ProfileType::Till.as_str(), "till");
@@ -219,7 +216,7 @@ mod tests {
 
     #[test]
     fn empty_registry_is_default_when_no_legacy_files_exist() {
-        let _guard = TEST_LOCK.lock().expect("test lock");
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let _home = temp_home();
         let registry = load_registry().expect("load registry");
         assert!(registry.active_profile.is_none());
@@ -228,7 +225,7 @@ mod tests {
 
     #[test]
     fn save_and_load_registry_round_trips() {
-        let _guard = TEST_LOCK.lock().expect("test lock");
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let _home = temp_home();
         let registry = ProfileRegistry {
             active_profile: Some("personal".into()),
@@ -250,7 +247,7 @@ mod tests {
 
     #[test]
     fn legacy_files_migrate_to_personal_profile() {
-        let _guard = TEST_LOCK.lock().expect("test lock");
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let home = temp_home();
         let config_dir = home.path().join(".config/daraja");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
@@ -283,7 +280,7 @@ mod tests {
 
     #[test]
     fn active_profile_context_loads_profile_credentials() {
-        let _guard = TEST_LOCK.lock().expect("test lock");
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let home = temp_home();
         let config_dir = home.path().join(".config/daraja");
         std::fs::create_dir_all(config_dir.join("profiles")).expect("create profile dir");

@@ -27,9 +27,14 @@ use profiles::{
     profile_summary, save_profile, Profile, ProfileType,
 };
 
+#[cfg(test)]
+static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const DEFAULT_CALLBACK: &str = "https://example.com/callback";
 const DEFAULT_RESULT_URL: &str = "https://example.com/result";
 const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
+const SANDBOX_PASSKEY: &str =
+    "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 
 #[derive(Parser)]
 #[command(
@@ -437,6 +442,34 @@ fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), Dara
     Ok(())
 }
 
+fn personal_profile(env_label: &str, credentials: &Credentials) -> Result<Profile, DarajaError> {
+    Ok(Profile {
+        name: "personal".into(),
+        profile_type: ProfileType::Personal,
+        environment: if env_label == "sandbox" {
+            Environment::Sandbox
+        } else {
+            Environment::Production
+        },
+        merchant_number: credentials.shortcode.clone(),
+        credentials_path: profile_credentials_path("personal")?
+            .display()
+            .to_string(),
+        initiator_configured: credentials.initiator_name.is_some()
+            && credentials.initiator_password.is_some(),
+    })
+}
+
+fn persist_personal_configuration(
+    env_label: &str,
+    credentials: &Credentials,
+    sdk_key: &str,
+) -> Result<(), DarajaError> {
+    let profile = personal_profile(env_label, credentials)?;
+    save_profile(&profile, credentials, sdk_key)?;
+    save_credentials(credentials, sdk_key)
+}
+
 fn confirm_payment(
     phone: &str,
     amount: u64,
@@ -720,11 +753,60 @@ fn build_initiator_credentials(
     }
 }
 
+fn looks_like_msisdn(shortcode: &str) -> bool {
+    let shortcode = shortcode.trim().trim_start_matches('+');
+    shortcode.chars().all(|c| c.is_ascii_digit())
+        && ((shortcode.starts_with("07") || shortcode.starts_with("01")) && shortcode.len() == 10
+            || shortcode.starts_with("254") && shortcode.len() == 12)
+}
+
+fn validate_shortcode(shortcode: String) -> Result<String, DarajaError> {
+    let shortcode = shortcode.trim().to_string();
+    if shortcode.is_empty() {
+        return Err(DarajaError::Config("missing --shortcode".into()));
+    }
+    if looks_like_msisdn(&shortcode) {
+        return Err(DarajaError::Config(
+            "shortcode looks like a phone number; enter a BusinessShortCode instead".into(),
+        ));
+    }
+    if !shortcode.chars().all(|c| c.is_ascii_digit()) {
+        return Err(DarajaError::Config(
+            "shortcode must contain digits only".into(),
+        ));
+    }
+    Ok(shortcode)
+}
+
+fn validate_credentials_for_environment(
+    env: Environment,
+    credentials: &Credentials,
+) -> Result<(), DarajaError> {
+    if matches!(env, Environment::Sandbox) && credentials.passkey.as_str() != SANDBOX_PASSKEY {
+        return Err(DarajaError::Config(
+            "sandbox passkey does not match the documented sandbox passkey; re-run `pesaraja init` and use the public sandbox passkey".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, DarajaError> {
     let (initiator_name, initiator_password) = build_initiator_credentials(
         opts.initiator_name.clone(),
         opts.initiator_password.clone(),
     )?;
+
+    let env = opts
+        .env
+        .ok_or_else(|| DarajaError::Config("missing --env".into()))?;
+    let passkey = match env {
+        InitEnvironment::Sandbox => SANDBOX_PASSKEY.to_string(),
+        InitEnvironment::Production => opts
+            .passkey
+            .clone()
+            .ok_or_else(|| DarajaError::Config("missing --passkey".into()))?,
+    };
 
     Ok(Credentials {
         consumer_key: Zeroizing::new(
@@ -737,15 +819,12 @@ fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, Dara
                 .clone()
                 .ok_or_else(|| DarajaError::Config("missing --consumer-secret".into()))?,
         ),
-        passkey: Zeroizing::new(
-            opts.passkey
+        passkey: Zeroizing::new(passkey),
+        shortcode: validate_shortcode(
+            opts.shortcode
                 .clone()
-                .ok_or_else(|| DarajaError::Config("missing --passkey".into()))?,
-        ),
-        shortcode: opts
-            .shortcode
-            .clone()
-            .ok_or_else(|| DarajaError::Config("missing --shortcode".into()))?,
+                .ok_or_else(|| DarajaError::Config("missing --shortcode".into()))?,
+        )?,
         initiator_name,
         initiator_password,
     })
@@ -785,17 +864,13 @@ fn prompt_credentials_interactive(
         consumer_secret
     };
 
-    let passkey: String = if defaults.is_some() {
+    let passkey: String = if env_label == "sandbox" {
+        println!("  ℹ Sandbox passkey is public and fixed.");
+        SANDBOX_PASSKEY.to_string()
+    } else if defaults.is_some() {
         Password::with_theme(&theme())
             .with_prompt("Passkey (Enter to keep existing)")
             .allow_empty_password(true)
-            .interact()
-            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
-    } else if env_label == "sandbox" {
-        let default_pk = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
-        println!("  ℹ Sandbox passkey is public: {}", &default_pk[..16]);
-        Password::with_theme(&theme())
-            .with_prompt("Passkey (paste the sandbox passkey)")
             .interact()
             .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
     } else {
@@ -824,6 +899,7 @@ fn prompt_credentials_interactive(
         .default(default_shortcode)
         .interact_text()
         .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?;
+    let shortcode = validate_shortcode(shortcode)?;
 
     println!();
     println!("  For send / query / balance / refund (optional):");
@@ -933,23 +1009,7 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
         let env_label = init_environment_label(opts.env.expect("checked above"));
         let credentials = credentials_from_init_options(&opts)?;
         let sdk_key = config::generate_sdk_key(init_key_prefix(env_label));
-        let profile = Profile {
-            name: "personal".into(),
-            profile_type: ProfileType::Personal,
-            environment: if env_label == "sandbox" {
-                Environment::Sandbox
-            } else {
-                Environment::Production
-            },
-            merchant_number: credentials.shortcode.clone(),
-            credentials_path: profile_credentials_path("personal")?
-                .display()
-                .to_string(),
-            initiator_configured: credentials.initiator_name.is_some()
-                && credentials.initiator_password.is_some(),
-        };
-        save_profile(&profile, &credentials, &sdk_key)?;
-        save_credentials(&credentials, &sdk_key)?;
+        persist_personal_configuration(env_label, &credentials, &sdk_key)?;
         if env_label == "sandbox" {
             ensure_sandbox_certificate().await?;
         }
@@ -978,8 +1038,8 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
                 .map(|(name, _)| name)
                 .unwrap_or("sandbox");
             let credentials =
-                prompt_credentials_interactive(env_label, "M-Pesa phone number", Some(creds))?;
-            save_credentials(&credentials, &key)?;
+                prompt_credentials_interactive(env_label, "PayBill / Till shortcode", Some(creds))?;
+            persist_personal_configuration(env_label, &credentials, &key)?;
             if env_label == "sandbox" {
                 ensure_sandbox_certificate().await?;
             }
@@ -1007,24 +1067,8 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
         InitAction::Cancelled => unreachable!(),
     };
 
-    let credentials = prompt_credentials_interactive(env_label, "M-Pesa phone number", None)?;
-    let profile = Profile {
-        name: "personal".into(),
-        profile_type: ProfileType::Personal,
-        environment: if env_label == "sandbox" {
-            Environment::Sandbox
-        } else {
-            Environment::Production
-        },
-        merchant_number: credentials.shortcode.clone(),
-        credentials_path: profile_credentials_path("personal")?
-            .display()
-            .to_string(),
-        initiator_configured: credentials.initiator_name.is_some()
-            && credentials.initiator_password.is_some(),
-    };
-    save_profile(&profile, &credentials, &sdk_key)?;
-    save_credentials(&credentials, &sdk_key)?;
+    let credentials = prompt_credentials_interactive(env_label, "PayBill / Till shortcode", None)?;
+    persist_personal_configuration(env_label, &credentials, &sdk_key)?;
     if env_label == "sandbox" {
         ensure_sandbox_certificate().await?;
     }
@@ -1155,6 +1199,8 @@ async fn cmd_export_key() -> Result<(), DarajaError> {
 
 pub(crate) async fn load_daraja() -> Result<Daraja, DarajaError> {
     if let Some((profile, credentials)) = load_active_profile_context()? {
+        validate_credentials_for_environment(profile.environment, &credentials)?;
+        validate_shortcode(credentials.shortcode.clone())?;
         return Daraja::from_credentials(credentials, profile.environment);
     }
 
@@ -1164,8 +1210,9 @@ pub(crate) async fn load_daraja() -> Result<Daraja, DarajaError> {
 }
 
 pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
-    if let Some((_, credentials)) = load_active_profile_context()? {
-        return Ok(credentials.shortcode);
+    if let Some((profile, credentials)) = load_active_profile_context()? {
+        validate_credentials_for_environment(profile.environment, &credentials)?;
+        return validate_shortcode(credentials.shortcode);
     }
 
     let key = load_sdk_key()?;
@@ -1175,7 +1222,227 @@ pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
         DarajaError::Config(format!("failed to read credentials: {e}"))
     })?;
     let creds = config::decrypt_credentials(&encrypted, &key_bytes)?;
-    Ok(creds.shortcode)
+    let environment = if key.starts_with("dsk_test_") {
+        Environment::Sandbox
+    } else {
+        Environment::Production
+    };
+    validate_credentials_for_environment(environment, &creds)?;
+    validate_shortcode(creds.shortcode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use daraja_rs::config::generate_sdk_key;
+    use zeroize::Zeroizing;
+
+    fn temp_home() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        dir
+    }
+
+    fn test_credentials(shortcode: &str) -> Credentials {
+        Credentials {
+            consumer_key: Zeroizing::new("ck".into()),
+            consumer_secret: Zeroizing::new("cs".into()),
+            passkey: Zeroizing::new("pk".into()),
+            shortcode: shortcode.into(),
+            initiator_name: Some(Zeroizing::new("apitest".into())),
+            initiator_password: Some(Zeroizing::new("pass".into())),
+        }
+    }
+
+    fn sandbox_credentials(shortcode: &str, passkey: &str) -> Credentials {
+        Credentials {
+            consumer_key: Zeroizing::new("ck".into()),
+            consumer_secret: Zeroizing::new("cs".into()),
+            passkey: Zeroizing::new(passkey.into()),
+            shortcode: shortcode.into(),
+            initiator_name: Some(Zeroizing::new("apitest".into())),
+            initiator_password: Some(Zeroizing::new("pass".into())),
+        }
+    }
+
+    fn seed_profile_home(shortcode: &str, passkey: &str) -> tempfile::TempDir {
+        let home = temp_home();
+        let sdk_key = generate_sdk_key("test");
+        let config_dir = home.path().join(".config/daraja");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(config_dir.join("key"), &sdk_key).expect("write key");
+        let creds = sandbox_credentials(shortcode, passkey);
+        let profile = Profile {
+            name: "personal".into(),
+            profile_type: ProfileType::Personal,
+            environment: Environment::Sandbox,
+            merchant_number: shortcode.into(),
+            credentials_path: profile_credentials_path("personal")
+                .expect("profile credentials path")
+                .display()
+                .to_string(),
+            initiator_configured: true,
+        };
+
+        save_profile(&profile, &creds, &sdk_key).expect("seed profile");
+        home
+    }
+
+    #[test]
+    fn personal_configuration_update_refreshes_profile_credentials() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let _home = temp_home();
+        let sdk_key = generate_sdk_key("test");
+
+        let first = test_credentials("174379");
+        persist_personal_configuration("sandbox", &first, &sdk_key)
+            .expect("initial persist");
+
+        let (active, loaded) = load_active_profile_context()
+            .expect("load active context")
+            .expect("active profile");
+        assert_eq!(active.merchant_number, "174379");
+        assert_eq!(loaded.shortcode, "174379");
+
+        let updated = test_credentials("254743121299");
+        persist_personal_configuration("sandbox", &updated, &sdk_key)
+            .expect("updated persist");
+
+        let (active, loaded) = load_active_profile_context()
+            .expect("reload active context")
+            .expect("active profile after update");
+        assert_eq!(active.merchant_number, "254743121299");
+        assert_eq!(loaded.shortcode, "254743121299");
+    }
+
+    #[test]
+    fn init_options_reject_phone_number_shortcodes() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let opts = InitOptions {
+            env: Some(InitEnvironment::Sandbox),
+            consumer_key: Some("ck".into()),
+            consumer_secret: Some("cs".into()),
+            passkey: Some("pk".into()),
+            shortcode: Some("0743121299".into()),
+            initiator_name: None,
+            initiator_password: None,
+            non_interactive: true,
+        };
+
+        let err = match credentials_from_init_options(&opts) {
+            Ok(_) => panic!("phone number should be rejected"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("BusinessShortCode"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn init_options_accept_business_shortcodes() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let opts = InitOptions {
+            env: Some(InitEnvironment::Sandbox),
+            consumer_key: Some("ck".into()),
+            consumer_secret: Some("cs".into()),
+            passkey: Some("pk".into()),
+            shortcode: Some("174379".into()),
+            initiator_name: None,
+            initiator_password: None,
+            non_interactive: true,
+        };
+
+        let creds = credentials_from_init_options(&opts).expect("business shortcode should pass");
+        assert_eq!(creds.shortcode, "174379");
+    }
+
+    #[test]
+    fn init_options_override_sandbox_passkey_to_documented_value() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let opts = InitOptions {
+            env: Some(InitEnvironment::Sandbox),
+            consumer_key: Some("ck".into()),
+            consumer_secret: Some("cs".into()),
+            passkey: Some("wrong-passkey".into()),
+            shortcode: Some("174379".into()),
+            initiator_name: None,
+            initiator_password: None,
+            non_interactive: true,
+        };
+
+        let creds = credentials_from_init_options(&opts)
+            .expect("sandbox init should accept and override passkey");
+        assert_eq!(creds.passkey.as_str(), SANDBOX_PASSKEY);
+    }
+
+    #[test]
+    fn sandbox_credentials_must_use_documented_passkey() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let creds = sandbox_credentials("174379", "wrong-passkey");
+        let err = match validate_credentials_for_environment(Environment::Sandbox, &creds) {
+            Ok(_) => panic!("sandbox passkey should be rejected"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("documented sandbox passkey"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn sandbox_credentials_accept_documented_passkey() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let creds = sandbox_credentials("174379", SANDBOX_PASSKEY);
+        validate_credentials_for_environment(Environment::Sandbox, &creds)
+            .expect("documented sandbox passkey should be accepted");
+    }
+
+    #[test]
+    fn validate_shortcode_rejects_msisdn_variants() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        for candidate in ["0743121299", "0112345678", "254743121299", "+254743121299"] {
+            let err = match validate_shortcode(candidate.to_string()) {
+                Ok(_) => panic!("mobile numbers should be rejected"),
+                Err(err) => err,
+            };
+            assert!(
+                err.to_string().contains("BusinessShortCode"),
+                "unexpected error for {candidate}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_shortcode_trims_and_accepts_business_shortcode() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let shortcode = validate_shortcode(" 174379 ".into()).expect("shortcode should pass");
+        assert_eq!(shortcode, "174379");
+    }
+
+    #[tokio::test]
+    async fn load_daraja_rejects_wrong_sandbox_passkey() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let _home = seed_profile_home("174379", "wrong-passkey");
+
+        let err = match load_daraja().await {
+            Ok(_) => panic!("wrong sandbox passkey should be rejected"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("documented sandbox passkey"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_shortcode_reads_active_profile_shortcode() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let _home = seed_profile_home("174379", SANDBOX_PASSKEY);
+
+        let shortcode = load_shortcode().expect("active profile shortcode");
+        assert_eq!(shortcode, "174379");
+    }
 }
 
 async fn cmd_prompt(
@@ -1801,6 +2068,29 @@ async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                             }
 
                             if is_sandbox {
+                                if let Err(err) = validate_credentials_for_environment(
+                                    Environment::Sandbox,
+                                    &creds,
+                                ) {
+                                    checks.push(CheckItem {
+                                        ok: false,
+                                        message: format!("Sandbox passkey mismatch: {err}"),
+                                        hint: Some(
+                                            "Re-run `pesaraja init` and use the public sandbox passkey."
+                                                .into(),
+                                        ),
+                                    });
+                                } else {
+                                    checks.push(CheckItem {
+                                        ok: true,
+                                        message: "Sandbox passkey matches the documented value"
+                                            .into(),
+                                        hint: None,
+                                    });
+                                }
+                            }
+
+                            if is_sandbox {
                                 checks.push(CheckItem {
                                     ok: false,
                                     message: "send: not available in sandbox (needs Go Live)"
@@ -1929,6 +2219,7 @@ async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                 || c.message.contains("Failed to decrypt")
                 || c.message.contains("invalid prefix")
                 || c.message.contains("Invalid SDK key")
+                || c.message.contains("Sandbox passkey mismatch")
         });
 
     if json {
