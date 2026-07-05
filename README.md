@@ -2,6 +2,12 @@
 
 > Daraja ni ngumu. Hii sio. Pesa raja.
 
+Current code-backed docs:
+
+- [Install](docs/install.md)
+- [Setup](docs/setup.md)
+- [Usage](docs/usage.md)
+
 Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broken one. This is the money bridge.
 
 ## The problem

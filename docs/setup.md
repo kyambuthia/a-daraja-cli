@@ -1,0 +1,119 @@
+# Setup
+
+## Interactive Setup
+
+Run:
+
+```bash
+pesaraja init
+```
+
+The wizard asks for:
+
+- environment: `sandbox` or `production`
+- Daraja consumer key
+- Daraja consumer secret
+- PayBill or Till shortcode
+- optional initiator name and initiator password for send, query, balance, and refund
+
+Sandbox setup uses the fixed public sandbox passkey automatically. Production setup asks for the Lipa Na M-Pesa passkey.
+
+After setup, the CLI prints an SDK key:
+
+```bash
+DARAJA_KEY=dsk_test_...
+```
+
+The CLI also saves the key locally, so normal CLI commands do not require `DARAJA_KEY` to be exported.
+
+## Non-Interactive Setup
+
+Sandbox:
+
+```bash
+pesaraja init \
+  --env sandbox \
+  --consumer-key "$DARAJA_CONSUMER_KEY" \
+  --consumer-secret "$DARAJA_CONSUMER_SECRET" \
+  --passkey ignored-in-sandbox \
+  --shortcode 174379 \
+  --non-interactive
+```
+
+The current CLI still requires `--passkey` for non-interactive sandbox setup, but it replaces the value with the fixed sandbox passkey internally.
+
+Production:
+
+```bash
+pesaraja init \
+  --env production \
+  --consumer-key "$DARAJA_CONSUMER_KEY" \
+  --consumer-secret "$DARAJA_CONSUMER_SECRET" \
+  --passkey "$DARAJA_PASSKEY" \
+  --shortcode "$DARAJA_SHORTCODE" \
+  --initiator-name "$DARAJA_INITIATOR_NAME" \
+  --initiator-password "$DARAJA_INITIATOR_PASSWORD" \
+  --non-interactive
+```
+
+## Stored Files
+
+`pesaraja init` writes under `~/.config/daraja/`:
+
+- `key`: local SDK key, written owner-readable.
+- `credentials.enc`: encrypted credential blob used by SDK constructors.
+- `profiles.json`: active profile registry metadata.
+- `profiles/personal.enc`: encrypted credentials for the active personal profile.
+- `sandbox.cer`: sandbox API certificate when sandbox setup succeeds.
+
+For production B2C, transaction status, balance, and reversal operations, save the production certificate as:
+
+```bash
+~/.config/daraja/production.cer
+```
+
+or set:
+
+```bash
+export DARAJA_CERT_PATH=/absolute/path/to/production.cer
+```
+
+## Environment Variables
+
+`DARAJA_KEY` overrides the local key file:
+
+```bash
+export DARAJA_KEY="$(pesaraja export-key)"
+```
+
+Use this in CI, Docker, and deployed apps that need the SDK key.
+
+## Inspect Setup
+
+Show non-secret config:
+
+```bash
+pesaraja config
+pesaraja --json config
+```
+
+Run pre-flight checks:
+
+```bash
+pesaraja doctor
+pesaraja --json doctor
+```
+
+`doctor` checks key presence, encrypted credentials, OAuth, initiator credentials, certificates, and environment-specific warnings.
+
+## Current Profile Model
+
+The CLI creates and uses an active `personal` profile. Profile metadata appears in `pesaraja config`.
+
+Not implemented yet:
+
+- `pesaraja setup paybill|till|pochi`
+- `pesaraja use <profile>`
+- `--profile <name>` on action commands
+
+Until those are implemented, rerun `pesaraja init` to update or overwrite the active credentials.
