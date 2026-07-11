@@ -188,7 +188,10 @@ verifyCallback(rawBody, signatureHeader);
 const confirmation = parseC2bConfirmation(JSON.parse(rawBody));
 ```
 
-Current limitation: `verifyCallback` checks that a callback body and signature header are present. Do not treat it as complete cryptographic verification yet.
+Current limitation: callback cryptographic verification is not configured. The SDK
+fails closed when `verifyCallback` is called; do not fulfill orders from an
+unverified callback. The CLI `receive` command is sandbox-only and labels local
+callbacks as unverified.
 
 ## Rust SDK
 

@@ -426,6 +426,7 @@ fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), Dara
             creds_path.display()
         ))
     })?;
+    set_private_permissions(&creds_path)?;
 
     let key_file = key_path()?;
     std::fs::write(&key_file, sdk_key).map_err(|e| {
@@ -440,6 +441,15 @@ fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), Dara
     })?;
 
     Ok(())
+}
+
+fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| DarajaError::Config(format!("failed to read file metadata: {e}")))?
+        .permissions();
+    perms.set_mode(0o600);
+    std::fs::set_permissions(path, perms)
+        .map_err(|e| DarajaError::Config(format!("failed to set private file permissions: {e}")))
 }
 
 fn personal_profile(env_label: &str, credentials: &Credentials) -> Result<Profile, DarajaError> {

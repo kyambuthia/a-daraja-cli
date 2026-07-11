@@ -21,7 +21,13 @@ export function stkCallbackMetadata(
   return Object.fromEntries(items.map((item) => [item.Name, item.Value]));
 }
 
-/** Verify a C2B callback has a Safaricom signature header (full crypto TBD). */
+/**
+ * Verify a C2B callback.
+ *
+ * The current public Daraja documentation does not expose enough detail to
+ * implement the signature algorithm and key management safely. Fail closed;
+ * never treat header presence as authentication.
+ */
 export function verifyCallback(
   body: string | Buffer,
   signatureHeader: string | null | undefined
@@ -37,6 +43,9 @@ export function verifyCallback(
       "Invalid callback signature: request did not come from Safaricom."
     );
   }
+  throw new DarajaError(
+    "Callback signature verification is not configured; refusing to trust this callback."
+  );
 }
 
 /** Parse a C2B confirmation or validation callback body. */

@@ -30,7 +30,7 @@ case "$ARCH" in
 esac
 
 REPO="kyambuthia/pesaraja"
-VERSION="v0.1.0"
+VERSION="${PESARAJA_VERSION:-}"
 TARBALL="pesaraja-${VERSION}-${OS}-${ARCH}.tar.gz"
 RELEASE_URL="https://github.com/${REPO}/releases/download/${VERSION}/${TARBALL}"
 
@@ -38,8 +38,8 @@ mkdir -p "$INSTALL_DIR"
 
 info "Detected ${OS}/${ARCH}"
 
-# Try prebuilt binary first
-if command -v curl >/dev/null 2>&1; then
+# Try a prebuilt binary only when an explicit release version is requested.
+if [ -n "$VERSION" ] && command -v curl >/dev/null 2>&1; then
     if curl -fsSL "$RELEASE_URL" -o /tmp/pesaraja.tar.gz 2>/dev/null; then
         tar -xzf /tmp/pesaraja.tar.gz -C /tmp
         cp /tmp/pesaraja "$BIN"
@@ -51,6 +51,9 @@ if command -v curl >/dev/null 2>&1; then
         BUILD_FROM_SOURCE=1
     fi
 else
+    if [ -z "$VERSION" ]; then
+        warn "No release version selected — building from source"
+    fi
     BUILD_FROM_SOURCE=1
 fi
 
@@ -83,4 +86,3 @@ echo ""
 info "${BOLD}pesaraja installed!${NC}"
 echo "  Run:  ${GREEN}pesaraja init${NC}"
 echo ""
-

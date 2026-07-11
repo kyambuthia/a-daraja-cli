@@ -3,6 +3,7 @@ use daraja_rs::error::DarajaError;
 use daraja_rs::types::Environment;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileType {
@@ -80,6 +81,7 @@ pub fn save_profile(
             creds_path.display()
         ))
     })?;
+    set_private_permissions(&creds_path)?;
 
     let mut registry = load_registry().unwrap_or_default();
     registry.profiles.retain(|p| p.name != profile.name);
@@ -112,7 +114,17 @@ pub fn save_registry(registry: &ProfileRegistry) -> Result<(), DarajaError> {
         .map_err(|e| DarajaError::Config(format!("failed to serialize profile registry: {e}")))?;
     std::fs::write(&path, text).map_err(|e| {
         DarajaError::Config(format!("failed to write profile registry: {e}"))
-    })
+    })?;
+    set_private_permissions(&path)
+}
+
+fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| DarajaError::Config(format!("failed to read file metadata: {e}")))?
+        .permissions();
+    perms.set_mode(0o600);
+    std::fs::set_permissions(path, perms)
+        .map_err(|e| DarajaError::Config(format!("failed to set private file permissions: {e}")))
 }
 
 pub fn legacy_registry() -> Result<ProfileRegistry, DarajaError> {

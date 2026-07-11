@@ -1,7 +1,7 @@
 use crate::{load_daraja, load_shortcode, load_sdk_key};
 use daraja_rs::api::c2b::register_urls;
 use daraja_rs::error::DarajaError;
-use daraja_rs::webhook::{verify_callback, C2bConfirmation};
+use daraja_rs::webhook::C2bConfirmation;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -16,6 +16,12 @@ pub async fn run(port: u16) -> Result<(), DarajaError> {
     let sdk_key = load_sdk_key()?;
     let is_sandbox = sdk_key.starts_with("dsk_test_");
     let env_label = if is_sandbox { "sandbox" } else { "production" };
+
+    if !is_sandbox {
+        return Err(DarajaError::Config(
+            "pesaraja receive is sandbox-only until cryptographic callback verification is configured".into(),
+        ));
+    }
 
     println!("✓ Reading credentials for {env_label}");
 
@@ -92,12 +98,6 @@ async fn handle_c2b_callback(
     req: Request<hyper::body::Incoming>,
     kind: &str,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let signature = req
-        .headers()
-        .get("X-Safaricom-Signature")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-
     let body = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(err) => {
@@ -114,25 +114,20 @@ async fn handle_c2b_callback(
         }
     };
 
-    let sig_ok = verify_callback(&body, signature.as_deref()).is_ok();
-
-    print_callback(kind, &confirmation, sig_ok);
+    print_callback(kind, &confirmation);
 
     Ok(accepted_response())
 }
 
-fn print_callback(kind: &str, conf: &C2bConfirmation, sig_ok: bool) {
+fn print_callback(kind: &str, conf: &C2bConfirmation) {
     println!("← C2B {kind}");
     println!("  Transaction:  {}", conf.trans_id);
     println!("  Phone:        {}", conf.msisdn);
     println!("  Amount:       {}", format_amount(&conf.trans_amount));
     println!("  Reference:    {}", conf.bill_ref_number);
     println!("  Time:         {}", format_trans_time(&conf.trans_time));
-    if sig_ok {
-        println!("  ✓ Signature verified");
-    } else {
-        println!("  ✗ Signature verification failed");
-    }
+    println!("  ⚠ Sandbox callback accepted for local testing only");
+    println!("  ⚠ Cryptographic callback verification is not configured");
     println!();
 }
 

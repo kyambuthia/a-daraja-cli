@@ -1,5 +1,8 @@
 # pesaraja
 
+> **Alpha software:** do not use for production money movement yet. Callback
+> signature verification is not currently implemented.
+
 > Daraja ni ngumu. Hii sio. Pesa raja.
 
 Current code-backed docs:
@@ -101,4 +104,4 @@ npm install file:./daraja-ts
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

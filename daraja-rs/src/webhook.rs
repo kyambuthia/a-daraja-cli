@@ -10,15 +10,20 @@ use crate::error::DarajaError;
 /// `body` — the raw request body bytes.
 /// `signature_header` — the value of the `X-Safaricom-Signature` header.
 ///
-/// Returns `Ok(())` if the signature is valid, or `Err(InvalidCallbackSignature)`.
+/// Returns an error until the configured Daraja cryptographic verification
+/// scheme is available. Header presence is never treated as authentication.
 pub fn verify_callback(body: &[u8], signature_header: Option<&str>) -> Result<(), DarajaError> {
     if body.is_empty() {
         return Err(DarajaError::InvalidCallbackSignature);
     }
-    match signature_header {
-        Some(s) if !s.is_empty() => Ok(()),
-        _ => Err(DarajaError::InvalidCallbackSignature),
+    if signature_header.is_none_or(str::is_empty) {
+        return Err(DarajaError::InvalidCallbackSignature);
     }
+
+    // Safaricom's current public documentation does not expose enough
+    // information to implement the signature algorithm and key management
+    // safely. Never treat header presence as authentication.
+    Err(DarajaError::CallbackVerificationUnavailable)
 }
 
 /// Verify that a C2B confirmation body contains the expected fields.
@@ -112,19 +117,19 @@ mod tests {
     #[test]
     fn verify_callback_rejects_whitespace_only_body() {
         let result = verify_callback(b"   ", Some("sig"));
-        assert!(result.is_ok(), "whitespace body is not empty, so accepted");
+        assert!(matches!(result, Err(DarajaError::CallbackVerificationUnavailable)));
     }
 
     #[test]
     fn verify_callback_rejects_whitespace_only_signature() {
         let result = verify_callback(b"body", Some("   "));
-        assert!(result.is_ok(), "whitespace signature is not empty, so accepted");
+        assert!(matches!(result, Err(DarajaError::CallbackVerificationUnavailable)));
     }
 
     #[test]
-    fn verify_callback_accepts_valid_input() {
+    fn verify_callback_fails_closed_until_crypto_is_configured() {
         let result = verify_callback(b"{\"valid\":true}", Some("abc123signature"));
-        assert!(result.is_ok());
+        assert!(matches!(result, Err(DarajaError::CallbackVerificationUnavailable)));
     }
 
     #[test]

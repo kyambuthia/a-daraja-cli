@@ -56,8 +56,10 @@ describe("webhook", () => {
     expect(confirmation.TransID).toBe("QEJ78H8JKR");
   });
 
-  it("verifies callback signature header is present", () => {
+  it("fails closed when callback cryptographic verification is unavailable", () => {
     expect(() => verifyCallback("{}", null)).toThrow("Invalid callback signature");
-    expect(() => verifyCallback("{}", "sig")).not.toThrow();
+    expect(() => verifyCallback("{}", "sig")).toThrow(
+      "Callback signature verification is not configured"
+    );
   });
 });

@@ -40,6 +40,9 @@ pub enum DarajaError {
     #[error("Invalid callback signature: request did not come from Safaricom.")]
     InvalidCallbackSignature,
 
+    #[error("Callback signature verification is not configured; refusing to trust this callback.")]
+    CallbackVerificationUnavailable,
+
     #[error("Idempotency conflict: a payment with this key is already in flight.")]
     IdempotencyConflict,
 
@@ -108,6 +111,7 @@ mod tests {
             DarajaError::Encryption("test".into()),
             DarajaError::Network("test".into()),
             DarajaError::InvalidCallbackSignature,
+            DarajaError::CallbackVerificationUnavailable,
             DarajaError::IdempotencyConflict,
             DarajaError::TransactionNotFound("test".into()),
             DarajaError::ReversalFailed("test".into()),
@@ -117,7 +121,7 @@ mod tests {
                 actual: "live".into(),
             },
         ];
-        assert_eq!(errors.len(), 16);
+        assert_eq!(errors.len(), 17);
     }
 
     #[test]
