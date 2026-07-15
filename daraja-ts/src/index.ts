@@ -1,4 +1,6 @@
 export { Daraja } from "./daraja.js";
+export { DarajaClient } from "./client.js";
+export type { DarajaClientOptions, RequestOptions } from "./client.js";
 export { DarajaError } from "./error.js";
 export type {
   BalanceOptions,

@@ -1,7 +1,32 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { validateAmount, validatePhone, validateShortcode, validateUrl } from "./validation.js";
 
 describe("request validation", () => {
+  it("matches the cross-language validation contract", async () => {
+    const contract = JSON.parse(
+      await readFile(new URL("../../fixtures/validation-contract.json", import.meta.url), "utf8")
+    ) as {
+      phones: Array<{ input: string; normalized?: string; valid?: boolean }>;
+      amounts: Array<{ value: number; valid: boolean }>;
+      urls: Array<{ value: string; environment: "sandbox" | "production"; valid: boolean }>;
+    };
+    for (const testCase of contract.phones) {
+      if (testCase.valid === false) {
+        expect(() => validatePhone(testCase.input)).toThrow();
+      } else {
+        expect(validatePhone(testCase.input)).toBe(testCase.normalized);
+      }
+    }
+    for (const testCase of contract.amounts) {
+      const check = () => validateAmount(testCase.value);
+      testCase.valid ? expect(check).not.toThrow() : expect(check).toThrow();
+    }
+    for (const testCase of contract.urls) {
+      const check = () => validateUrl("Callback URL", testCase.value, testCase.environment);
+      testCase.valid ? expect(check).not.toThrow() : expect(check).toThrow();
+    }
+  });
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     "rejects invalid amount %s",
     (amount) => expect(() => validateAmount(amount)).toThrow("positive whole")

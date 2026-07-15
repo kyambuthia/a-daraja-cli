@@ -1,0 +1,21 @@
+{
+  "phones": [
+    { "input": "0712345678", "normalized": "254712345678" },
+    { "input": "+254112345678", "normalized": "254112345678" },
+    { "input": "254712345678", "normalized": "254712345678" },
+    { "input": "254812345678", "valid": false },
+    { "input": "25471234abcd", "valid": false },
+    { "input": "", "valid": false }
+  ],
+  "amounts": [
+    { "value": 1, "valid": true },
+    { "value": 500, "valid": true },
+    { "value": 0, "valid": false }
+  ],
+  "urls": [
+    { "value": "https://example.com/callback", "environment": "production", "valid": true },
+    { "value": "http://example.com/callback", "environment": "production", "valid": false },
+    { "value": "http://localhost:8181/callback", "environment": "sandbox", "valid": true },
+    { "value": "not-a-url", "environment": "sandbox", "valid": false }
+  ]
+}

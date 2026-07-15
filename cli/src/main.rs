@@ -1,5 +1,6 @@
 mod receive;
 mod profiles;
+mod input;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daraja_rs::api::balance::query_balance;
@@ -16,7 +17,8 @@ use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
 use daraja_rs::webhook::C2bConfirmation;
-use daraja_rs::validation::{validate_amount, validate_phone};
+use daraja_rs::validation::validate_phone;
+use input::parse_kes_amount;
 use daraja_rs::certs::ensure_sandbox_certificate;
 use daraja_rs::Daraja;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
@@ -343,48 +345,6 @@ enum InitAction {
     Update(Credentials),
     Overwrite,
     Cancelled,
-}
-
-fn parse_kes_amount(amount: &str) -> Result<u64, DarajaError> {
-    let amount = amount.trim();
-    if amount.is_empty() {
-        return Err(DarajaError::Config("amount cannot be empty".into()));
-    }
-
-    if let Some((whole, frac)) = amount.split_once('.') {
-        if whole.is_empty() || !whole.chars().all(|c| c.is_ascii_digit()) {
-            return Err(DarajaError::Config(format!(
-                "invalid amount '{amount}': expected a whole number of KES"
-            )));
-        }
-        if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
-            return Err(DarajaError::Config(format!(
-                "invalid amount '{amount}': expected a whole number of KES"
-            )));
-        }
-        let whole_kes: u64 = whole
-            .parse()
-            .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))?;
-        if frac.chars().any(|c| c != '0') {
-            return Err(DarajaError::Config(format!(
-                "invalid amount '{amount}': fractional KES amounts are not supported"
-            )));
-        }
-        validate_amount(whole_kes)?;
-        return Ok(whole_kes);
-    }
-
-    if !amount.chars().all(|c| c.is_ascii_digit()) {
-        return Err(DarajaError::Config(format!(
-            "invalid amount '{amount}': expected a whole number of KES"
-        )));
-    }
-
-    let amount = amount
-        .parse()
-        .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))?;
-    validate_amount(amount)?;
-    Ok(amount)
 }
 
 fn sdk_key_environment(key: &str) -> Option<(&'static str, &'static str)> {
@@ -1395,13 +1355,6 @@ mod tests {
         let creds = credentials_from_init_options(&opts)
             .expect("sandbox init should accept and override passkey");
         assert_eq!(creds.passkey.as_str(), SANDBOX_PASSKEY);
-    }
-
-    #[test]
-    fn kes_amount_rejects_zero_and_fractional_values() {
-        assert!(parse_kes_amount("0").is_err());
-        assert!(parse_kes_amount("100.50").is_err());
-        assert_eq!(parse_kes_amount("100.00").unwrap(), 100);
     }
 
     #[test]

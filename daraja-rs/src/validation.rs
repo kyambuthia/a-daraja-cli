@@ -99,6 +99,65 @@ pub fn validate_shortcode(shortcode: &str) -> Result<(), DarajaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct Contract {
+        phones: Vec<PhoneCase>,
+        amounts: Vec<AmountCase>,
+        urls: Vec<UrlCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct PhoneCase {
+        input: String,
+        normalized: Option<String>,
+        valid: Option<bool>,
+    }
+
+    #[derive(Deserialize)]
+    struct AmountCase {
+        value: u64,
+        valid: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct UrlCase {
+        value: String,
+        environment: String,
+        valid: bool,
+    }
+
+    #[test]
+    fn matches_cross_language_validation_contract() {
+        let contract: Contract = serde_json::from_str(include_str!(
+            "../../fixtures/validation-contract.json"
+        ))
+        .unwrap();
+        for case in contract.phones {
+            let result = validate_phone(&case.input);
+            assert_eq!(result.is_ok(), case.valid.unwrap_or(true), "phone {}", case.input);
+            if let Some(expected) = case.normalized {
+                assert_eq!(result.unwrap(), expected);
+            }
+        }
+        for case in contract.amounts {
+            assert_eq!(validate_amount(case.value).is_ok(), case.valid, "amount {}", case.value);
+        }
+        for case in contract.urls {
+            let environment = if case.environment == "production" {
+                Environment::Production
+            } else {
+                Environment::Sandbox
+            };
+            assert_eq!(
+                validate_url("callback URL", &case.value, environment).is_ok(),
+                case.valid,
+                "URL {}",
+                case.value
+            );
+        }
+    }
 
     #[test]
     fn phone_validation_normalizes_supported_kenyan_formats() {
