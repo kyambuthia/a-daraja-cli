@@ -1,7 +1,7 @@
 use crate::{load_daraja, load_shortcode, load_sdk_key};
 use daraja_rs::api::c2b::register_urls;
 use daraja_rs::error::DarajaError;
-use daraja_rs::webhook::C2bConfirmation;
+use daraja_rs::webhook::{C2bConfirmation, validate_c2b_confirmation};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -106,7 +106,7 @@ async fn handle_c2b_callback(
         }
     };
 
-    let confirmation: C2bConfirmation = match serde_json::from_slice(&body) {
+    let confirmation: C2bConfirmation = match validate_c2b_confirmation(&body) {
         Ok(c) => c,
         Err(err) => {
             eprintln!("  × Invalid C2B {kind} payload: {err}");

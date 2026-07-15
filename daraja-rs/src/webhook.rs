@@ -1,14 +1,17 @@
 // Callback / webhook verification.
 //
-// C2B callbacks include an `X-Safaricom-Signature` header that must be verified
-// to ensure the request genuinely came from Safaricom, not a spoofed sender.
+// Cryptographic authentication is not available from the documented callback
+// contract. Parsing and matching callbacks never makes them trusted.
 
 use crate::error::DarajaError;
+use crate::validation::{
+    validate_optional_text, validate_phone, validate_required_text, validate_shortcode,
+};
 
 /// Verify that a C2B callback request came from Safaricom.
 ///
 /// `body` — the raw request body bytes.
-/// `signature_header` — the value of the `X-Safaricom-Signature` header.
+/// `signature_header` — a reserved authenticator value, if one is configured.
 ///
 /// Returns an error until the configured Daraja cryptographic verification
 /// scheme is available. Header presence is never treated as authentication.
@@ -16,7 +19,7 @@ pub fn verify_callback(body: &[u8], signature_header: Option<&str>) -> Result<()
     if body.is_empty() {
         return Err(DarajaError::InvalidCallbackSignature);
     }
-    if signature_header.is_none_or(str::is_empty) {
+    if signature_header.is_none_or(|value| value.trim().is_empty()) {
         return Err(DarajaError::InvalidCallbackSignature);
     }
 
@@ -28,9 +31,57 @@ pub fn verify_callback(body: &[u8], signature_header: Option<&str>) -> Result<()
 
 /// Verify that a C2B confirmation body contains the expected fields.
 pub fn validate_c2b_confirmation(body: &[u8]) -> Result<C2bConfirmation, DarajaError> {
-    serde_json::from_slice(body).map_err(|_e| {
-        DarajaError::InvalidCallbackSignature
-    })
+    let mut confirmation: C2bConfirmation = serde_json::from_slice(body)
+        .map_err(|e| DarajaError::InvalidCallback(format!("malformed JSON: {e}")))?;
+    validate_required_text("transaction type", &confirmation.transaction_type, 64)
+        .map_err(callback_validation_error)?;
+    validate_required_text("transaction ID", &confirmation.trans_id, 128)
+        .map_err(callback_validation_error)?;
+    if confirmation.trans_time.len() != 14
+        || !confirmation.trans_time.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(DarajaError::InvalidCallback(
+            "transaction time must contain 14 digits".into(),
+        ));
+    }
+    if !is_positive_decimal(&confirmation.trans_amount) {
+        return Err(DarajaError::InvalidCallback(
+            "transaction amount must be positive".into(),
+        ));
+    }
+    validate_shortcode(&confirmation.business_short_code).map_err(callback_validation_error)?;
+    validate_optional_text("bill reference", &confirmation.bill_ref_number, 100)
+        .map_err(callback_validation_error)?;
+    confirmation.msisdn =
+        validate_phone(&confirmation.msisdn).map_err(callback_validation_error)?;
+    Ok(confirmation)
+}
+
+fn callback_validation_error(error: DarajaError) -> DarajaError {
+    DarajaError::InvalidCallback(error.to_string())
+}
+
+fn is_positive_decimal(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let Some(whole) = parts.next() else {
+        return false;
+    };
+    let fraction = parts.next();
+    if parts.next().is_some()
+        || whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.is_some_and(|part| {
+            part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        return false;
+    }
+    value.bytes().any(|byte| matches!(byte, b'1'..=b'9'))
+}
+
+/// Stable key applications can use to reject C2B callback replay.
+pub fn c2b_callback_deduplication_key(callback: &C2bConfirmation) -> String {
+    format!("c2b:transaction:{}", callback.trans_id)
 }
 
 /// A parsed C2B confirmation callback.
@@ -123,7 +174,7 @@ mod tests {
     #[test]
     fn verify_callback_rejects_whitespace_only_signature() {
         let result = verify_callback(b"body", Some("   "));
-        assert!(matches!(result, Err(DarajaError::CallbackVerificationUnavailable)));
+        assert!(matches!(result, Err(DarajaError::InvalidCallbackSignature)));
     }
 
     #[test]
@@ -173,5 +224,39 @@ mod tests {
         }"#;
         let result = validate_c2b_confirmation(json);
         assert!(result.is_err(), "TransactionType as number should fail");
+    }
+
+    #[test]
+    fn validate_c2b_confirmation_rejects_invalid_domain_values() {
+        let json = br#"{
+            "TransactionType": "Pay Bill",
+            "TransID": "QEJ78H8JKR",
+            "TransTime": "not-a-time",
+            "TransAmount": "0.00",
+            "BusinessShortCode": "174379",
+            "BillRefNumber": "Test",
+            "MSISDN": "254712345678"
+        }"#;
+        assert!(matches!(
+            validate_c2b_confirmation(json),
+            Err(DarajaError::InvalidCallback(_))
+        ));
+    }
+
+    #[test]
+    fn c2b_deduplication_key_uses_transaction_id() {
+        let callback = validate_c2b_confirmation(br#"{
+            "TransactionType": "Pay Bill",
+            "TransID": "QEJ78H8JKR",
+            "TransTime": "20240101120000",
+            "TransAmount": "500.00",
+            "BusinessShortCode": "174379",
+            "BillRefNumber": "Test",
+            "MSISDN": "254712345678"
+        }"#).unwrap();
+        assert_eq!(
+            c2b_callback_deduplication_key(&callback),
+            "c2b:transaction:QEJ78H8JKR"
+        );
     }
 }

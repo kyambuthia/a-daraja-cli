@@ -47,6 +47,9 @@ pub enum DarajaError {
     #[error("Invalid callback signature: request did not come from Safaricom.")]
     InvalidCallbackSignature,
 
+    #[error("Invalid callback payload: {0}")]
+    InvalidCallback(String),
+
     #[error("Callback signature verification is not configured; refusing to trust this callback.")]
     CallbackVerificationUnavailable,
 
@@ -134,6 +137,7 @@ mod tests {
                 message: "request rejected".into(),
             },
             DarajaError::InvalidCallbackSignature,
+            DarajaError::InvalidCallback("test".into()),
             DarajaError::CallbackVerificationUnavailable,
             DarajaError::IdempotencyConflict,
             DarajaError::IdempotencyKeyReused,
@@ -147,7 +151,7 @@ mod tests {
                 actual: "live".into(),
             },
         ];
-        assert_eq!(errors.len(), 21);
+        assert_eq!(errors.len(), 22);
     }
 
     #[test]

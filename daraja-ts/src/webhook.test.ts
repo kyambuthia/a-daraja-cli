@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseC2bConfirmation,
   parseStkCallback,
+  matchStkCallback,
+  stkCallbackDeduplicationKey,
   stkCallbackMetadata,
   stkCallbackPaid,
   verifyCallback,
@@ -43,6 +45,30 @@ describe("webhook", () => {
     expect(meta.MpesaReceiptNumber).toBe("QAB123");
   });
 
+  it("matches successful callbacks to the initiated payment", () => {
+    const callback = parseStkCallback(sample);
+    const matched = matchStkCallback(callback, {
+      checkoutRequestId: "ws_CO_1",
+      merchantRequestId: "mr-1",
+      amount: 500,
+    });
+    expect(matched.receiptNumber).toBe("QAB123");
+    expect(stkCallbackDeduplicationKey(callback)).toBe("stk:receipt:QAB123");
+  });
+
+  it("rejects mismatched payment callbacks", () => {
+    const callback = parseStkCallback(sample);
+    expect(() =>
+      matchStkCallback(callback, { checkoutRequestId: "ws_CO_1", amount: 501 })
+    ).toThrow("amount does not match");
+  });
+
+  it("rejects structurally invalid STK callbacks", () => {
+    expect(() => parseStkCallback({ Body: { stkCallback: { CheckoutRequestID: "x" } } })).toThrow(
+      "MerchantRequestID"
+    );
+  });
+
   it("parses C2B confirmation", () => {
     const confirmation = parseC2bConfirmation({
       TransactionType: "Pay Bill",
@@ -57,9 +83,23 @@ describe("webhook", () => {
   });
 
   it("fails closed when callback cryptographic verification is unavailable", () => {
-    expect(() => verifyCallback("{}", null)).toThrow("Invalid callback signature");
+    expect(() => verifyCallback("{}", null)).toThrow("Invalid callback authenticator");
     expect(() => verifyCallback("{}", "sig")).toThrow(
-      "Callback signature verification is not configured"
+      "cryptographic verification is unavailable"
     );
+  });
+
+  it("rejects invalid C2B domain fields", () => {
+    expect(() =>
+      parseC2bConfirmation({
+        TransactionType: "Pay Bill",
+        TransID: "QEJ78H8JKR",
+        TransTime: "not-a-time",
+        TransAmount: "0.00",
+        BusinessShortCode: "174379",
+        BillRefNumber: "Order-1",
+        MSISDN: "254712345678",
+      })
+    ).toThrow("TransTime");
   });
 });

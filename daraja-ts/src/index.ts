@@ -19,12 +19,16 @@ export type {
   StkTransactionType,
 } from "./types.js";
 export {
+  c2bCallbackDeduplicationKey,
+  matchStkCallback,
   parseC2bConfirmation,
   parseStkCallback,
+  stkCallbackDeduplicationKey,
   stkCallbackMetadata,
   stkCallbackPaid,
   verifyCallback,
 } from "./webhook.js";
+export type { ExpectedStkPayment, MatchedStkCallback } from "./webhook.js";
 export { certificatePath, ensureSandboxCertificate } from "./certs.js";
 export { idempotencyKeyForBody } from "./idempotency.js";
 export { normalizePhone } from "./security.js";
