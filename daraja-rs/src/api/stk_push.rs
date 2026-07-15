@@ -4,8 +4,9 @@
 
 use crate::client::{DarajaClient, RequestOptions};
 use crate::error::DarajaError;
-use crate::security::{current_timestamp, generate_password, normalize_phone};
+use crate::security::{current_timestamp, generate_password};
 use crate::types::{StkPushRequest, StkPushResponse, StkTransactionType};
+use crate::validation::{validate_amount, validate_phone, validate_required_text, validate_url};
 use serde::Serialize;
 
 /// Initiate an STK Push to a customer's phone.
@@ -106,12 +107,17 @@ async fn stk_push_with_options(
     transaction_type: StkTransactionType,
     request_options: RequestOptions,
 ) -> Result<StkPushResponse, DarajaError> {
+    validate_amount(amount)?;
+    let phone = validate_phone(phone)?;
+    validate_required_text("description", description, 100)?;
+    validate_required_text("account reference", account_reference, 100)?;
+    validate_url("callback URL", callback_url, client.environment())?;
+
     let shortcode = &client.credentials.shortcode;
     let passkey = client.credentials.passkey.as_str();
     let timestamp = current_timestamp();
     let password = generate_password(shortcode, passkey, &timestamp);
 
-    let phone = normalize_phone(phone);
     let request = StkPushRequest {
         business_short_code: shortcode.clone(),
         password,
@@ -140,6 +146,7 @@ pub async fn stk_push_query(
     client: &DarajaClient,
     checkout_request_id: &str,
 ) -> Result<StkPushResponse, DarajaError> {
+    validate_required_text("checkout request ID", checkout_request_id, 128)?;
     let shortcode = &client.credentials.shortcode;
     let passkey = client.credentials.passkey.as_str();
     let timestamp = current_timestamp();

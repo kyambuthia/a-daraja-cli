@@ -10,6 +10,7 @@ pub mod idempotency;
 pub mod security;
 pub mod types;
 pub mod webhook;
+pub mod validation;
 
 pub mod api;
 

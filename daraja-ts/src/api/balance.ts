@@ -1,6 +1,7 @@
 import type { DarajaClient } from "../client.js";
 import type { BalanceOptions, ConversationResponse } from "../types.js";
 import { initiatorName, initiatorSecurityCredential } from "./common.js";
+import { validateUrl } from "../validation.js";
 
 const ACCOUNT_BALANCE_PATH = "/mpesa/accountbalance/v1/query";
 
@@ -8,6 +9,8 @@ export async function queryBalance(
   client: DarajaClient,
   options: BalanceOptions
 ): Promise<ConversationResponse> {
+  validateUrl("Result URL", options.resultUrl, client.environment);
+  validateUrl("Timeout URL", options.timeoutUrl, client.environment);
   const securityCredential = await initiatorSecurityCredential(client);
 
   return client.post<ConversationResponse>(ACCOUNT_BALANCE_PATH, {

@@ -6,6 +6,7 @@ use crate::api::common::{initiator_name, initiator_security_credential};
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
 use crate::types::AccountBalanceRequest;
+use crate::validation::validate_url;
 
 const ACCOUNT_BALANCE_PATH: &str = "/mpesa/accountbalance/v1/query";
 
@@ -28,6 +29,9 @@ pub async fn query_balance(
     result_url: &str,
     timeout_url: &str,
 ) -> Result<AccountBalanceResponse, DarajaError> {
+    validate_url("result URL", result_url, client.environment())?;
+    validate_url("timeout URL", timeout_url, client.environment())?;
+
     let request = AccountBalanceRequest {
         initiator: initiator_name(client)?,
         security_credential: initiator_security_credential(client)?,

@@ -5,8 +5,10 @@
 use crate::api::common::initiator_security_credential;
 use crate::client::{DarajaClient, RequestOptions};
 use crate::error::DarajaError;
-use crate::security::normalize_phone;
 use crate::types::{B2cCommand, B2cRequest};
+use crate::validation::{
+    validate_amount, validate_optional_text, validate_phone, validate_required_text, validate_url,
+};
 
 const B2C_PAYMENT_PATH: &str = "/mpesa/b2c/v1/paymentrequest";
 
@@ -88,6 +90,13 @@ async fn b2c_payment_with_options(
     timeout_url: &str,
     request_options: RequestOptions,
 ) -> Result<B2cResponse, DarajaError> {
+    validate_amount(amount)?;
+    let phone = validate_phone(phone)?;
+    validate_required_text("remarks", remarks, 100)?;
+    validate_optional_text("occasion", occasion, 100)?;
+    validate_url("result URL", result_url, client.environment())?;
+    validate_url("timeout URL", timeout_url, client.environment())?;
+
     let creds = &client.credentials;
 
     let initiator_name = creds
@@ -101,7 +110,7 @@ async fn b2c_payment_with_options(
         command_id: command.as_str().into(),
         amount: amount.to_string(),
         party_a: creds.shortcode.clone(),
-        party_b: normalize_phone(phone),
+        party_b: phone,
         remarks: remarks.into(),
         queue_timeout_url: timeout_url.into(),
         result_url: result_url.into(),

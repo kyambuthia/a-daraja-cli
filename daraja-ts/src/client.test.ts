@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DarajaClient } from "./client.js";
 import { IdempotencyStore } from "./idempotency.js";
 import type { Credentials } from "./types.js";
+import { simulateC2b } from "./api/c2b.js";
 
 const credentials: Credentials = {
   consumerKey: "consumer-key",
@@ -74,5 +75,21 @@ describe("DarajaClient idempotency", () => {
       )
     ).rejects.toThrow("different request parameters");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("DarajaClient environment boundaries", () => {
+  it("rejects C2B simulation in production before network I/O", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DarajaClient(credentials, "production", {
+      idempotency: false,
+    });
+
+    await expect(
+      simulateC2b(client, { phone: "254712345678", amount: 100 })
+    ).rejects.toThrow("sandbox");
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

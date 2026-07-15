@@ -6,6 +6,10 @@ use crate::api::common::{initiator_name, initiator_security_credential};
 use crate::client::{DarajaClient, RequestOptions};
 use crate::error::DarajaError;
 use crate::types::ReversalRequest;
+use crate::validation::{
+    validate_amount, validate_optional_text, validate_required_text, validate_shortcode,
+    validate_url,
+};
 
 const REVERSAL_PATH: &str = "/mpesa/reversal/v1/request";
 const COMMAND_ID: &str = "TransactionReversal";
@@ -93,6 +97,15 @@ async fn reverse_transaction_with_options(
     timeout_url: &str,
     request_options: RequestOptions,
 ) -> Result<ReversalResponse, DarajaError> {
+    validate_amount(amount)?;
+    validate_required_text("transaction ID", transaction_id, 128)?;
+    validate_shortcode(receiver_party)?;
+    validate_required_text("receiver identifier type", receiver_identifier_type, 8)?;
+    validate_required_text("remarks", remarks, 100)?;
+    validate_optional_text("occasion", occasion, 100)?;
+    validate_url("result URL", result_url, client.environment())?;
+    validate_url("timeout URL", timeout_url, client.environment())?;
+
     let request = ReversalRequest {
         initiator: initiator_name(client)?,
         security_credential: initiator_security_credential(client)?,

@@ -16,6 +16,7 @@ use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
 use daraja_rs::webhook::C2bConfirmation;
+use daraja_rs::validation::{validate_amount, validate_phone};
 use daraja_rs::certs::ensure_sandbox_certificate;
 use daraja_rs::Daraja;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
@@ -365,10 +366,11 @@ fn parse_kes_amount(amount: &str) -> Result<u64, DarajaError> {
             .parse()
             .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))?;
         if frac.chars().any(|c| c != '0') {
-            eprintln!(
-                "  Warning: decimal portion dropped — M-Pesa amounts are whole KES."
-            );
+            return Err(DarajaError::Config(format!(
+                "invalid amount '{amount}': fractional KES amounts are not supported"
+            )));
         }
+        validate_amount(whole_kes)?;
         return Ok(whole_kes);
     }
 
@@ -378,9 +380,11 @@ fn parse_kes_amount(amount: &str) -> Result<u64, DarajaError> {
         )));
     }
 
-    amount
+    let amount = amount
         .parse()
-        .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))
+        .map_err(|_| DarajaError::Config(format!("invalid amount '{amount}'")))?;
+    validate_amount(amount)?;
+    Ok(amount)
 }
 
 fn sdk_key_environment(key: &str) -> Option<(&'static str, &'static str)> {
@@ -564,15 +568,6 @@ pub(crate) fn load_sdk_key() -> Result<String, DarajaError> {
         )));
     }
     Ok(key)
-}
-
-fn normalize_phone(phone: &str) -> String {
-    let phone = phone.trim().trim_start_matches('+');
-    if phone.starts_with('0') {
-        format!("254{}", &phone[1..])
-    } else {
-        phone.to_string()
-    }
 }
 
 fn print_error(err: &DarajaError) {
@@ -1403,6 +1398,13 @@ mod tests {
     }
 
     #[test]
+    fn kes_amount_rejects_zero_and_fractional_values() {
+        assert!(parse_kes_amount("0").is_err());
+        assert!(parse_kes_amount("100.50").is_err());
+        assert_eq!(parse_kes_amount("100.00").unwrap(), 100);
+    }
+
+    #[test]
     fn sandbox_credentials_must_use_documented_passkey() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let creds = sandbox_credentials("174379", "wrong-passkey");
@@ -1483,7 +1485,7 @@ async fn cmd_prompt(
     idempotency_key: Option<String>,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
-    let phone = normalize_phone(&phone);
+    let phone = validate_phone(&phone)?;
 
     let callback = match callback_url {
         Some(url) => url,
@@ -1604,7 +1606,7 @@ async fn cmd_simulate(
         Some(code) => code,
         None => load_shortcode()?,
     };
-    let phone = normalize_phone(&phone);
+    let phone = validate_phone(&phone)?;
 
     let resp = simulate_c2b(
         daraja.client(),
@@ -1653,7 +1655,7 @@ async fn cmd_send(
     json: bool,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
-    let phone = normalize_phone(&to);
+    let phone = validate_phone(&to)?;
 
     if dry_run {
         print_dry_run(
