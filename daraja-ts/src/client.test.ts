@@ -76,6 +76,55 @@ describe("DarajaClient idempotency", () => {
     ).rejects.toThrow("different request parameters");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("redacts unrecognized fields from API errors", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: "token", expires_in: "3599" }))
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            errorCode: "400.001",
+            errorMessage: "Request rejected",
+            consumerSecret: "must-not-leak",
+          }),
+          { status: 400 }
+        )
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DarajaClient(credentials, "sandbox", {
+      baseUrlOverride: "https://daraja.invalid",
+      idempotency: false,
+    });
+
+    const error = await client.post("/payment", {}).catch((value: unknown) => value);
+    expect(String(error)).toContain("400.001");
+    expect(String(error)).toContain("Request rejected");
+    expect(String(error)).not.toContain("must-not-leak");
+  });
+
+  it("enforces the configured request timeout", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: "token", expires_in: "3599" }))
+      )
+      .mockImplementationOnce((_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DarajaClient(credentials, "sandbox", {
+      baseUrlOverride: "https://daraja.invalid",
+      idempotency: false,
+      requestTimeoutMs: 20,
+    });
+
+    await expect(client.post("/slow", {})).rejects.toBeDefined();
+  });
 });
 
 describe("DarajaClient environment boundaries", () => {

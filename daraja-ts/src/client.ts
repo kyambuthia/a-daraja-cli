@@ -1,5 +1,5 @@
 import { TokenManager } from "./auth.js";
-import { DarajaError } from "./error.js";
+import { apiError, DarajaError } from "./error.js";
 import {
   idempotencyKeyForBody,
   IdempotencyStore,
@@ -14,6 +14,7 @@ export interface DarajaClientOptions {
   baseUrlOverride?: string;
   idempotency?: boolean;
   idempotencyStore?: IdempotencyStore;
+  requestTimeoutMs?: number;
 }
 
 export interface RequestOptions {
@@ -33,7 +34,8 @@ export class DarajaClient {
       credentials.consumerKey,
       credentials.consumerSecret,
       environment,
-      options.baseUrlOverride
+      options.baseUrlOverride,
+      options.requestTimeoutMs ?? 30_000
     );
 
     if (options.idempotency !== false) {
@@ -121,7 +123,7 @@ export class DarajaClient {
       if (this.idempotencyStore) {
         await this.idempotencyStore.saveFailed(scopedKey);
       }
-      throw new DarajaError(`Network error: HTTP ${response.status}: ${text}`);
+      throw apiError(response.status, text);
     }
 
     let parsed: T;
@@ -159,6 +161,7 @@ export class DarajaClient {
         "Idempotency-Key": idempotencyKey,
       },
       body: new Uint8Array(body),
+      signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000),
     });
 
     if (response.status === 401 && !isRetry) {

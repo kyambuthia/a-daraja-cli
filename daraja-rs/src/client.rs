@@ -4,7 +4,7 @@
 // 1. Ensures a valid OAuth token is cached
 // 2. Attaches an Idempotency-Key header (UUID v4)
 // 3. Tracks the key in a local cache to prevent double-sends
-// 4. Retries on transient failures with exponential backoff
+// 4. Refreshes authentication once on a definitive 401 response
 
 use crate::auth::TokenManager;
 use crate::config::Credentials;
@@ -14,6 +14,7 @@ use crate::types::Environment;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// The HTTP client that all API calls go through.
 pub struct DarajaClient {
@@ -32,6 +33,22 @@ pub struct RequestOptions {
     pub idempotency_key: Option<String>,
 }
 
+/// Network deadlines applied to OAuth and Daraja API calls.
+#[derive(Debug, Clone, Copy)]
+pub struct HttpConfig {
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
 impl RequestOptions {
     pub fn with_idempotency_key(key: impl Into<String>) -> Self {
         Self {
@@ -43,17 +60,32 @@ impl RequestOptions {
 impl DarajaClient {
     /// Create a new client with credentials and environment.
     pub fn new(credentials: Credentials, environment: Environment) -> Result<Self, DarajaError> {
-        let token_manager = TokenManager::new(
+        Self::with_http_config(credentials, environment, HttpConfig::default())
+    }
+
+    /// Create a client with explicit connection and request deadlines.
+    pub fn with_http_config(
+        credentials: Credentials,
+        environment: Environment,
+        http_config: HttpConfig,
+    ) -> Result<Self, DarajaError> {
+        let inner = reqwest::Client::builder()
+            .connect_timeout(http_config.connect_timeout)
+            .timeout(http_config.request_timeout)
+            .build()
+            .map_err(|e| DarajaError::Config(format!("failed to configure HTTP client: {e}")))?;
+        let token_manager = TokenManager::with_http_client(
             credentials.consumer_key.to_string(),
             credentials.consumer_secret.to_string(),
             environment,
+            inner.clone(),
         );
         let idempotency = Some(Mutex::new(default_idempotency_store().map_err(|e| {
             DarajaError::Config(format!("failed to open idempotency cache: {e}"))
         })?));
 
         Ok(DarajaClient {
-            inner: reqwest::Client::new(),
+            inner,
             token_manager: tokio::sync::Mutex::new(token_manager),
             credentials,
             environment,
@@ -111,7 +143,7 @@ impl DarajaClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "<no body>".to_string());
-            Err(DarajaError::Network(format!("HTTP {}: {}", status, body)))
+            Err(api_error(status, &body))
         }
     }
 
@@ -183,7 +215,7 @@ impl DarajaClient {
         } else {
             self.save_idempotency_failed(&scoped_key);
             let body = String::from_utf8_lossy(&response_bytes);
-            Err(DarajaError::Network(format!("HTTP {status}: {body}")))
+            Err(api_error(status, &body))
         }
     }
 
@@ -342,6 +374,37 @@ fn validate_idempotency_key(key: &str) -> Result<(), DarajaError> {
         ));
     }
     Ok(())
+}
+
+fn api_error(status: reqwest::StatusCode, body: &str) -> DarajaError {
+    let parsed = serde_json::from_str::<serde_json::Value>(body).ok();
+    let code = parsed
+        .as_ref()
+        .and_then(|value| {
+            ["errorCode", "ResponseCode", "requestId"]
+                .iter()
+                .find_map(|key| value.get(key).and_then(|item| item.as_str()))
+        })
+        .unwrap_or("unknown")
+        .chars()
+        .take(64)
+        .collect();
+    let message = parsed
+        .as_ref()
+        .and_then(|value| {
+            ["errorMessage", "ResponseDescription", "message"]
+                .iter()
+                .find_map(|key| value.get(key).and_then(|item| item.as_str()))
+        })
+        .unwrap_or("request rejected; response body omitted")
+        .chars()
+        .take(256)
+        .collect();
+    DarajaError::Api {
+        status: status.as_u16(),
+        code,
+        message,
+    }
 }
 
 // ── Idempotency ──────────────────────────────────────────────
@@ -720,6 +783,76 @@ mod tests {
             }
             let result: Result<Resp, _> = client.post("/fail", &serde_json::json!({})).await;
             assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn api_errors_redact_unrecognized_response_fields() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/fail"))
+                .respond_with(ResponseTemplate::new(400).set_body_json(
+                    serde_json::json!({
+                        "errorCode": "400.001",
+                        "errorMessage": "Request rejected",
+                        "consumerSecret": "must-not-leak"
+                    }),
+                ))
+                .mount(&server)
+                .await;
+
+            let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
+                .unwrap()
+                .with_base_url(server.uri())
+                .without_idempotency();
+            let result: Result<serde_json::Value, _> =
+                client.post("/fail", &serde_json::json!({})).await;
+            let message = result.unwrap_err().to_string();
+            assert!(message.contains("400.001"));
+            assert!(message.contains("Request rejected"));
+            assert!(!message.contains("must-not-leak"));
+        }
+
+        #[tokio::test]
+        async fn client_enforces_request_timeout() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/slow"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(Duration::from_millis(200))
+                        .set_body_json(serde_json::json!({"ok": true})),
+                )
+                .mount(&server)
+                .await;
+
+            let client = DarajaClient::with_http_config(
+                test_credentials(),
+                Environment::Sandbox,
+                HttpConfig {
+                    connect_timeout: Duration::from_millis(50),
+                    request_timeout: Duration::from_millis(50),
+                },
+            )
+            .unwrap()
+            .with_base_url(server.uri())
+            .without_idempotency();
+            let result: Result<serde_json::Value, _> =
+                client.post("/slow", &serde_json::json!({})).await;
+            assert!(matches!(result, Err(DarajaError::Network(_))));
         }
 
         #[tokio::test]

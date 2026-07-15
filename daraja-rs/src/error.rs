@@ -37,6 +37,13 @@ pub enum DarajaError {
     #[error("Network error: {0}")]
     Network(String),
 
+    #[error("Daraja API request failed (HTTP {status}, code {code}): {message}")]
+    Api {
+        status: u16,
+        code: String,
+        message: String,
+    },
+
     #[error("Invalid callback signature: request did not come from Safaricom.")]
     InvalidCallbackSignature,
 
@@ -121,6 +128,11 @@ mod tests {
             DarajaError::Config("test".into()),
             DarajaError::Encryption("test".into()),
             DarajaError::Network("test".into()),
+            DarajaError::Api {
+                status: 400,
+                code: "invalid_request".into(),
+                message: "request rejected".into(),
+            },
             DarajaError::InvalidCallbackSignature,
             DarajaError::CallbackVerificationUnavailable,
             DarajaError::IdempotencyConflict,
@@ -135,7 +147,7 @@ mod tests {
                 actual: "live".into(),
             },
         ];
-        assert_eq!(errors.len(), 20);
+        assert_eq!(errors.len(), 21);
     }
 
     #[test]

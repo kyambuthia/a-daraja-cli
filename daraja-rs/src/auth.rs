@@ -41,6 +41,22 @@ impl TokenManager {
         }
     }
 
+    pub(crate) fn with_http_client(
+        consumer_key: String,
+        consumer_secret: String,
+        environment: Environment,
+        http_client: reqwest::Client,
+    ) -> Self {
+        TokenManager {
+            consumer_key,
+            consumer_secret,
+            environment,
+            cached_token: None,
+            http_client,
+            base_url_override: None,
+        }
+    }
+
     /// Override the base URL (for testing with wiremock).
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url_override = Some(url);
@@ -66,18 +82,43 @@ impl TokenManager {
         let encoded = STANDARD.encode(credentials);
         let auth = format!("Basic {}", encoded);
 
-        let response = self
-            .http_client
-            .get(&url)
-            .header("Authorization", auth)
-            .send()
-            .await
-            .map_err(|e| DarajaError::AuthFailed(format!("request failed: {}", e)))?;
+        let mut attempt = 0u32;
+        let response = loop {
+            let result = self
+                .http_client
+                .get(&url)
+                .header("Authorization", auth.clone())
+                .send()
+                .await;
+            match result {
+                Ok(response)
+                    if attempt < 2
+                        && (response.status().is_server_error()
+                            || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS) =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * (1 << attempt)))
+                        .await;
+                    attempt += 1;
+                }
+                Ok(response) => break response,
+                Err(error) if attempt < 2 && (error.is_connect() || error.is_timeout()) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * (1 << attempt)))
+                        .await;
+                    attempt += 1;
+                }
+                Err(error) => {
+                    return Err(DarajaError::AuthFailed(format!(
+                        "request failed before a token was obtained: {error}"
+                    )));
+                }
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_else(|_| "<no body>".to_string());
-            return Err(DarajaError::AuthFailed(format!("HTTP {}: {}", status, body)));
+            return Err(DarajaError::AuthFailed(format!(
+                "HTTP {status}: credentials were rejected; response body omitted"
+            )));
         }
 
         #[derive(serde::Deserialize)]
@@ -115,7 +156,7 @@ impl TokenManager {
     pub fn is_expired(token: &Option<Token>) -> bool {
         match token {
             None => true,
-            Some(t) => t.expires_at <= chrono::Utc::now(),
+            Some(t) => t.expires_at <= chrono::Utc::now() + Duration::seconds(30),
         }
     }
 
@@ -231,12 +272,12 @@ mod tests {
     }
 
     #[test]
-    fn token_1_second_before_expiry_is_not_expired() {
+    fn token_inside_safety_window_is_expired() {
         let token = Token {
             access_token: "abc".into(),
             expires_at: chrono::Utc::now() + chrono::Duration::seconds(1),
         };
-        assert!(!TokenManager::is_expired(&Some(token)));
+        assert!(TokenManager::is_expired(&Some(token)));
     }
 
     #[test]
