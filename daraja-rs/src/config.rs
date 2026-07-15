@@ -8,11 +8,11 @@
 
 use crate::error::DarajaError;
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit},
 };
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use rand::RngCore;
 use rand::rngs::OsRng;
 use zeroize::Zeroizing;
@@ -95,9 +95,9 @@ pub fn decrypt_credentials(encrypted: &[u8], key: &[u8; 32]) -> Result<Credentia
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
 
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| DarajaError::Encryption("decryption failed (wrong key or tampered data)".into()))?;
+    let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|_| {
+        DarajaError::Encryption("decryption failed (wrong key or tampered data)".into())
+    })?;
 
     let plain: PlainCreds = serde_json::from_slice(&plaintext)
         .map_err(|e| DarajaError::Encryption(format!("deserialize failed: {}", e)))?;
@@ -150,13 +150,19 @@ mod tests {
     #[test]
     fn sdk_key_has_prefix() {
         let key = generate_sdk_key("test");
-        assert!(key.starts_with("dsk_test_"), "key should start with dsk_test_");
+        assert!(
+            key.starts_with("dsk_test_"),
+            "key should start with dsk_test_"
+        );
     }
 
     #[test]
     fn sdk_key_has_live_prefix() {
         let key = generate_sdk_key("live");
-        assert!(key.starts_with("dsk_live_"), "key should start with dsk_live_");
+        assert!(
+            key.starts_with("dsk_live_"),
+            "key should start with dsk_live_"
+        );
     }
 
     #[test]
@@ -165,11 +171,8 @@ mod tests {
         let b64_part = key.strip_prefix("dsk_test_").unwrap();
         // Base64-encoded 32 bytes = 44 characters with padding
         assert_eq!(b64_part.len(), 44, "base64 of 32 bytes = 44 chars");
-        base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            b64_part,
-        )
-        .expect("suffix should be valid base64");
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64_part)
+            .expect("suffix should be valid base64");
     }
 
     #[test]
@@ -186,7 +189,11 @@ mod tests {
     fn extracted_key_is_32_bytes() {
         let sdk_key = generate_sdk_key("test");
         let key_bytes = extract_key_from_sdk_key(&sdk_key).expect("valid SDK key");
-        assert_eq!(key_bytes.len(), 32, "key must be exactly 32 bytes (256 bits)");
+        assert_eq!(
+            key_bytes.len(),
+            32,
+            "key must be exactly 32 bytes (256 bits)"
+        );
     }
 
     // ── encrypt / decrypt roundtrip ──────────────────────────
@@ -195,7 +202,9 @@ mod tests {
         Credentials {
             consumer_key: Zeroizing::new("ck_test_abc123".into()),
             consumer_secret: Zeroizing::new("cs_secret_xyz".into()),
-            passkey: Zeroizing::new("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919".into()),
+            passkey: Zeroizing::new(
+                "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919".into(),
+            ),
             shortcode: "174379".into(),
             initiator_name: Some(Zeroizing::new("apitest".into())),
             initiator_password: Some(Zeroizing::new("Safaricom999!*!".into())),
@@ -209,14 +218,17 @@ mod tests {
         let key_bytes = extract_key_from_sdk_key(&sdk_key).unwrap();
 
         let encrypted = encrypt_credentials(&creds, &key_bytes).expect("encryption should succeed");
-        let decrypted = decrypt_credentials(&encrypted, &key_bytes).expect("decryption should succeed");
+        let decrypted =
+            decrypt_credentials(&encrypted, &key_bytes).expect("decryption should succeed");
 
         assert_eq!(*decrypted.consumer_key, *creds.consumer_key);
         assert_eq!(*decrypted.consumer_secret, *creds.consumer_secret);
         assert_eq!(*decrypted.passkey, *creds.passkey);
         assert_eq!(decrypted.shortcode, creds.shortcode);
-        assert_eq!(decrypted.initiator_name.as_deref().map(|s| s.as_str()),
-                   creds.initiator_name.as_deref().map(|s| s.as_str()));
+        assert_eq!(
+            decrypted.initiator_name.as_deref().map(|s| s.as_str()),
+            creds.initiator_name.as_deref().map(|s| s.as_str())
+        );
     }
 
     #[test]
@@ -244,7 +256,10 @@ mod tests {
         }
 
         let result = decrypt_credentials(&encrypted, &key);
-        assert!(result.is_err(), "tampered ciphertext must fail AES-GCM authentication");
+        assert!(
+            result.is_err(),
+            "tampered ciphertext must fail AES-GCM authentication"
+        );
     }
 
     #[test]
@@ -272,10 +287,8 @@ mod tests {
     #[test]
     fn extract_key_fails_on_wrong_length_after_decode() {
         // Base64 of 16 bytes = 24 chars, but we need 44 (for 32 bytes)
-        let short_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &[0u8; 16],
-        );
+        let short_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[0u8; 16]);
         let result = extract_key_from_sdk_key(&format!("dsk_test_{}", short_b64));
         assert!(result.is_err(), "16-byte key should be rejected (need 32)");
     }
@@ -297,7 +310,10 @@ mod tests {
         let key = extract_key_from_sdk_key(&generate_sdk_key("test")).unwrap();
         let blob1 = encrypt_credentials(&creds, &key).unwrap();
         let blob2 = encrypt_credentials(&creds, &key).unwrap();
-        assert_ne!(blob1, blob2, "different nonces must produce different ciphertexts");
+        assert_ne!(
+            blob1, blob2,
+            "different nonces must produce different ciphertexts"
+        );
     }
 
     #[test]
@@ -314,14 +330,20 @@ mod tests {
     fn decrypt_exactly_12_bytes_fails() {
         let key = extract_key_from_sdk_key(&generate_sdk_key("test")).unwrap();
         let result = decrypt_credentials(&[0u8; 12], &key);
-        assert!(result.is_err(), "nonce-only data should fail (no ciphertext)");
+        assert!(
+            result.is_err(),
+            "nonce-only data should fail (no ciphertext)"
+        );
     }
 
     #[test]
     fn decrypt_13_bytes_fails() {
         let key = extract_key_from_sdk_key(&generate_sdk_key("test")).unwrap();
         let result = decrypt_credentials(&[0u8; 13], &key);
-        assert!(result.is_err(), "1 byte of fake ciphertext should fail auth");
+        assert!(
+            result.is_err(),
+            "1 byte of fake ciphertext should fail auth"
+        );
     }
 
     #[test]

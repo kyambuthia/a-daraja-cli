@@ -7,16 +7,16 @@
 // STK Push uses a different scheme:
 //   base64(shortcode + passkey + timestamp (YYYYMMDDHHmmss))
 
+use crate::certs::certificate_pem;
 use crate::error::DarajaError;
+use crate::types::Environment;
 use base64::Engine;
 use rand::rngs::OsRng;
-use crate::certs::certificate_pem;
-use crate::types::Environment;
-use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
+use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey};
 use std::convert::TryFrom;
 use x509_cert::{
     certificate::Certificate,
-    der::{referenced::OwnedToRef, DecodePem},
+    der::{DecodePem, referenced::OwnedToRef},
 };
 
 /// Generate a Daraja SecurityCredential from an initiator password and PEM certificate.
@@ -53,10 +53,7 @@ fn rsa_public_key_from_pem(pem: &str) -> Result<RsaPublicKey, DarajaError> {
         let cert = Certificate::from_pem(pem.as_bytes()).map_err(|e| {
             DarajaError::Encryption(format!("failed to parse certificate PEM: {e}"))
         })?;
-        let spki = cert
-            .tbs_certificate
-            .subject_public_key_info
-            .owned_to_ref();
+        let spki = cert.tbs_certificate.subject_public_key_info.owned_to_ref();
         return RsaPublicKey::try_from(spki).map_err(|e| {
             DarajaError::Encryption(format!(
                 "certificate does not contain a valid RSA public key: {e}"
@@ -65,9 +62,8 @@ fn rsa_public_key_from_pem(pem: &str) -> Result<RsaPublicKey, DarajaError> {
     }
 
     // Try raw public key PEM
-    RsaPublicKey::from_public_key_pem(pem).map_err(|e| {
-        DarajaError::Encryption(format!("failed to parse public key PEM: {e}"))
-    })
+    RsaPublicKey::from_public_key_pem(pem)
+        .map_err(|e| DarajaError::Encryption(format!("failed to parse public key PEM: {e}")))
 }
 
 /// Generate the encrypted password for STK Push requests.
@@ -117,11 +113,8 @@ mod tests {
         let password = generate_password(shortcode, passkey, timestamp);
 
         // Verify it's valid base64
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &password,
-        )
-        .expect("password should be valid base64");
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &password)
+            .expect("password should be valid base64");
 
         let expected_plain = format!("{}{}{}", shortcode, passkey, timestamp);
         assert_eq!(
@@ -156,11 +149,8 @@ mod tests {
     #[test]
     fn password_handles_empty_inputs() {
         let pw = generate_password("", "", "");
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &pw,
-        )
-        .expect("should be valid base64 even with empty inputs");
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pw)
+            .expect("should be valid base64 even with empty inputs");
         assert!(decoded.is_empty());
     }
 
@@ -239,28 +229,25 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let ts2 = current_timestamp();
         // Either ts2 > ts1 or equal if we're unlucky with clock resolution
-        assert!(ts2 >= ts1, "timestamps must never go backwards: {ts1} -> {ts2}");
+        assert!(
+            ts2 >= ts1,
+            "timestamps must never go backwards: {ts1} -> {ts2}"
+        );
     }
 
     #[test]
     fn password_with_special_chars() {
         let pw = generate_password("!@#", "$%^", "&*()");
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &pw,
-        )
-        .expect("special chars should produce valid base64");
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pw)
+            .expect("special chars should produce valid base64");
         assert_eq!(String::from_utf8(decoded).unwrap(), "!@#$%^&*()");
     }
 
     #[test]
     fn password_with_unicode_inputs() {
         let pw = generate_password("💰", "💸", "20240101120000");
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &pw,
-        )
-        .expect("unicode should encode cleanly");
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pw)
+            .expect("unicode should encode cleanly");
         assert_eq!(String::from_utf8(decoded).unwrap(), "💰💸20240101120000");
     }
 
@@ -268,11 +255,8 @@ mod tests {
     fn password_with_very_long_input() {
         let long = "a".repeat(10_000);
         let pw = generate_password(&long, "b", "c");
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &pw,
-        )
-        .expect("long input should encode");
+        let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &pw)
+            .expect("long input should encode");
         assert!(decoded.len() > 10_000);
     }
 
@@ -288,7 +272,7 @@ mod tests {
     #[test]
     fn security_credential_from_rsa_public_key_pem() {
         use rand::rngs::OsRng;
-        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+        use rsa::{RsaPrivateKey, pkcs8::EncodePublicKey};
 
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");
@@ -301,11 +285,9 @@ mod tests {
         let credential =
             generate_security_credential(password, &public_pem).expect("credential generation");
 
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &credential,
-        )
-        .expect("security credential should be valid base64");
+        let decoded =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &credential)
+                .expect("security credential should be valid base64");
 
         assert!(!decoded.is_empty());
         assert_ne!(decoded, password.as_bytes());
@@ -314,7 +296,7 @@ mod tests {
     #[test]
     fn security_credential_round_trips_with_generated_keypair() {
         use rand::rngs::OsRng;
-        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+        use rsa::{RsaPrivateKey, pkcs8::EncodePublicKey};
 
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");
@@ -327,11 +309,9 @@ mod tests {
         let credential =
             generate_security_credential(password, &public_pem).expect("credential generation");
 
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &credential,
-        )
-        .expect("security credential should be valid base64");
+        let decoded =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &credential)
+                .expect("security credential should be valid base64");
 
         let decrypted = private_key
             .decrypt(Pkcs1v15Encrypt, &decoded)

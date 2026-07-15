@@ -44,9 +44,7 @@ pub async fn register_urls(
         confirmation_url: confirmation_url.to_string(),
         validation_url: validation_url.to_string(),
     };
-    client
-        .post("/mpesa/c2b/v1/registerurl", &request)
-        .await
+    client.post("/mpesa/c2b/v1/registerurl", &request).await
 }
 
 /// Simulate a C2B transaction (sandbox only).

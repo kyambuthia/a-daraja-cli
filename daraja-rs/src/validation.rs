@@ -33,11 +33,7 @@ pub fn validate_phone(phone: &str) -> Result<String, DarajaError> {
     Ok(normalized)
 }
 
-pub fn validate_url(
-    label: &str,
-    value: &str,
-    environment: Environment,
-) -> Result<(), DarajaError> {
+pub fn validate_url(label: &str, value: &str, environment: Environment) -> Result<(), DarajaError> {
     let parsed = url::Url::parse(value)
         .map_err(|_| DarajaError::Config(format!("{label} must be an absolute URL")))?;
     if parsed.host_str().is_none() || !matches!(parsed.scheme(), "http" | "https") {
@@ -86,9 +82,7 @@ pub fn validate_optional_text(
 }
 
 pub fn validate_shortcode(shortcode: &str) -> Result<(), DarajaError> {
-    if !(5..=9).contains(&shortcode.len())
-        || !shortcode.bytes().all(|byte| byte.is_ascii_digit())
-    {
+    if !(5..=9).contains(&shortcode.len()) || !shortcode.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(DarajaError::Config(
             "shortcode must contain 5-9 digits".into(),
         ));
@@ -130,19 +124,27 @@ mod tests {
 
     #[test]
     fn matches_cross_language_validation_contract() {
-        let contract: Contract = serde_json::from_str(include_str!(
-            "../../fixtures/validation-contract.json"
-        ))
-        .unwrap();
+        let contract: Contract =
+            serde_json::from_str(include_str!("../../fixtures/validation-contract.json")).unwrap();
         for case in contract.phones {
             let result = validate_phone(&case.input);
-            assert_eq!(result.is_ok(), case.valid.unwrap_or(true), "phone {}", case.input);
+            assert_eq!(
+                result.is_ok(),
+                case.valid.unwrap_or(true),
+                "phone {}",
+                case.input
+            );
             if let Some(expected) = case.normalized {
                 assert_eq!(result.unwrap(), expected);
             }
         }
         for case in contract.amounts {
-            assert_eq!(validate_amount(case.value).is_ok(), case.valid, "amount {}", case.value);
+            assert_eq!(
+                validate_amount(case.value).is_ok(),
+                case.valid,
+                "amount {}",
+                case.value
+            );
         }
         for case in contract.urls {
             let environment = if case.environment == "production" {
@@ -180,8 +182,29 @@ mod tests {
 
     #[test]
     fn production_urls_require_https() {
-        assert!(validate_url("callback URL", "http://example.com", Environment::Production).is_err());
-        assert!(validate_url("callback URL", "https://example.com", Environment::Production).is_ok());
-        assert!(validate_url("callback URL", "http://localhost:8181", Environment::Sandbox).is_ok());
+        assert!(
+            validate_url(
+                "callback URL",
+                "http://example.com",
+                Environment::Production
+            )
+            .is_err()
+        );
+        assert!(
+            validate_url(
+                "callback URL",
+                "https://example.com",
+                Environment::Production
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_url(
+                "callback URL",
+                "http://localhost:8181",
+                Environment::Sandbox
+            )
+            .is_ok()
+        );
     }
 }

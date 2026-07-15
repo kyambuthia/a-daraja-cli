@@ -6,8 +6,8 @@
 use crate::error::DarajaError;
 use crate::types::Environment;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use chrono::{Duration, Utc};
 
 /// An OAuth access token with expiry tracking.
@@ -132,15 +132,9 @@ impl TokenManager {
             .await
             .map_err(|e| DarajaError::AuthFailed(format!("failed to parse response: {}", e)))?;
 
-        let expires_in: i64 = oauth
-            .expires_in
-            .parse()
-            .map_err(|e| {
-                DarajaError::AuthFailed(format!(
-                    "invalid expires_in '{}': {}",
-                    oauth.expires_in, e
-                ))
-            })?;
+        let expires_in: i64 = oauth.expires_in.parse().map_err(|e| {
+            DarajaError::AuthFailed(format!("invalid expires_in '{}': {}", oauth.expires_in, e))
+        })?;
 
         let expires_at = Utc::now() + Duration::seconds(expires_in);
 
@@ -300,11 +294,8 @@ mod tests {
 
     #[test]
     fn token_manager_new_stores_credentials() {
-        let manager = TokenManager::new(
-            "ck".into(),
-            "cs".into(),
-            crate::types::Environment::Sandbox,
-        );
+        let manager =
+            TokenManager::new("ck".into(), "cs".into(), crate::types::Environment::Sandbox);
         // Constructor should not panic, and struct compiles with fields
         assert!(manager.cached_token.is_none());
     }
@@ -324,17 +315,19 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok-123", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok-123", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
 
-            let mut manager = TokenManager::new(
-                "ck".into(), "cs".into(),
-                crate::types::Environment::Sandbox,
-            ).with_base_url(server.uri());
+            let mut manager =
+                TokenManager::new("ck".into(), "cs".into(), crate::types::Environment::Sandbox)
+                    .with_base_url(server.uri());
 
-            let token = manager.get_token().await.expect("token fetch should succeed");
+            let token = manager
+                .get_token()
+                .await
+                .expect("token fetch should succeed");
             assert_eq!(token.access_token, "tok-123");
         }
 
@@ -346,16 +339,15 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok-456", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok-456", "expires_in": "3599"}),
                 ))
                 .expect(1) // Only called once
                 .mount(&server)
                 .await;
 
-            let mut manager = TokenManager::new(
-                "ck".into(), "cs".into(),
-                crate::types::Environment::Sandbox,
-            ).with_base_url(server.uri());
+            let mut manager =
+                TokenManager::new("ck".into(), "cs".into(), crate::types::Environment::Sandbox)
+                    .with_base_url(server.uri());
 
             let t1 = manager.get_token().await.unwrap();
             let t2 = manager.get_token().await.unwrap();
@@ -369,7 +361,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok-first", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok-first", "expires_in": "3599"}),
                 ))
                 .up_to_n_times(1)
                 .mount(&server)
@@ -378,16 +370,15 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok-second", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok-second", "expires_in": "3599"}),
                 ))
                 .expect(1)
                 .mount(&server)
                 .await;
 
-            let mut manager = TokenManager::new(
-                "ck".into(), "cs".into(),
-                crate::types::Environment::Sandbox,
-            ).with_base_url(server.uri());
+            let mut manager =
+                TokenManager::new("ck".into(), "cs".into(), crate::types::Environment::Sandbox)
+                    .with_base_url(server.uri());
 
             let t1 = manager.get_token().await.unwrap();
             assert_eq!(t1.access_token, "tok-first");
@@ -407,10 +398,9 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let mut manager = TokenManager::new(
-                "ck".into(), "cs".into(),
-                crate::types::Environment::Sandbox,
-            ).with_base_url(server.uri());
+            let mut manager =
+                TokenManager::new("ck".into(), "cs".into(), crate::types::Environment::Sandbox)
+                    .with_base_url(server.uri());
 
             let result = manager.get_token().await;
             assert!(result.is_err(), "HTTP 500 should return error");
@@ -427,15 +417,14 @@ mod tests {
                     "Basic Y2s6Y3M=", // base64 of "ck:cs"
                 ))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
 
-            let mut manager = TokenManager::new(
-                "ck".into(), "cs".into(),
-                crate::types::Environment::Sandbox,
-            ).with_base_url(server.uri());
+            let mut manager =
+                TokenManager::new("ck".into(), "cs".into(), crate::types::Environment::Sandbox)
+                    .with_base_url(server.uri());
 
             manager.get_token().await.unwrap();
         }

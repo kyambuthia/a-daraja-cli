@@ -52,10 +52,7 @@ mod tests {
 
     #[test]
     fn endpoint_path_is_correct() {
-        assert_eq!(
-            ACCOUNT_BALANCE_PATH,
-            "/mpesa/accountbalance/v1/query"
-        );
+        assert_eq!(ACCOUNT_BALANCE_PATH, "/mpesa/accountbalance/v1/query");
     }
 
     #[test]

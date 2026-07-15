@@ -797,13 +797,11 @@ mod tests {
                 .await;
             Mock::given(method("POST"))
                 .and(path("/fail"))
-                .respond_with(ResponseTemplate::new(400).set_body_json(
-                    serde_json::json!({
-                        "errorCode": "400.001",
-                        "errorMessage": "Request rejected",
-                        "consumerSecret": "must-not-leak"
-                    }),
-                ))
+                .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "errorCode": "400.001",
+                    "errorMessage": "Request rejected",
+                    "consumerSecret": "must-not-leak"
+                })))
                 .mount(&server)
                 .await;
 

@@ -60,10 +60,7 @@ mod tests {
 
     #[test]
     fn endpoint_path_is_correct() {
-        assert_eq!(
-            TRANSACTION_STATUS_PATH,
-            "/mpesa/transactionstatus/v1/query"
-        );
+        assert_eq!(TRANSACTION_STATUS_PATH, "/mpesa/transactionstatus/v1/query");
     }
 
     #[test]

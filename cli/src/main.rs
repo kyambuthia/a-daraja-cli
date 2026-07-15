@@ -1,35 +1,35 @@
-mod receive;
-mod profiles;
 mod input;
+mod profiles;
+mod receive;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use daraja_rs::api::balance::query_balance;
 use daraja_rs::api::b2c::{b2c_payment, b2c_payment_with_idempotency_key};
+use daraja_rs::api::balance::query_balance;
 use daraja_rs::api::c2b::{register_urls, simulate_c2b};
+use daraja_rs::api::reversal::{reverse_transaction, reverse_transaction_with_idempotency_key};
+use daraja_rs::api::status::query_status;
 use daraja_rs::api::stk_push::{
     stk_push_query, stk_push_with_type, stk_push_with_type_and_idempotency_key,
 };
-use daraja_rs::api::reversal::{reverse_transaction, reverse_transaction_with_idempotency_key};
-use daraja_rs::api::status::query_status;
 
+use daraja_rs::Daraja;
 use daraja_rs::auth::TokenManager;
+use daraja_rs::certs::ensure_sandbox_certificate;
 use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
-use daraja_rs::webhook::C2bConfirmation;
 use daraja_rs::validation::validate_phone;
+use daraja_rs::webhook::C2bConfirmation;
+use dialoguer::{Confirm, Input, Password, Select, theme::ColorfulTheme};
 use input::parse_kes_amount;
-use daraja_rs::certs::ensure_sandbox_certificate;
-use daraja_rs::Daraja;
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use zeroize::Zeroizing;
 
 use profiles::{
-    active_profile, load_active_profile_context, load_registry, profile_credentials_path,
-    profile_summary, save_profile, Profile, ProfileType,
+    Profile, ProfileType, active_profile, load_active_profile_context, load_registry,
+    profile_credentials_path, profile_summary, save_profile,
 };
 
 #[cfg(test)]
@@ -38,8 +38,7 @@ static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const DEFAULT_CALLBACK: &str = "https://example.com/callback";
 const DEFAULT_RESULT_URL: &str = "https://example.com/result";
 const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
-const SANDBOX_PASSKEY: &str =
-    "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
+const SANDBOX_PASSKEY: &str = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 
 #[derive(Parser)]
 #[command(
@@ -364,7 +363,10 @@ fn key_source_label() -> String {
     {
         "DARAJA_KEY environment variable".to_string()
     } else {
-        format!("auto-loaded from {}", key_path().unwrap_or_default().display())
+        format!(
+            "auto-loaded from {}",
+            key_path().unwrap_or_default().display()
+        )
     }
 }
 
@@ -372,9 +374,8 @@ fn load_credentials() -> Result<Credentials, DarajaError> {
     let key = load_sdk_key()?;
     let key_bytes = config::extract_key_from_sdk_key(&key)?;
     let path = credentials_path()?;
-    let encrypted = std::fs::read(&path).map_err(|e| {
-        DarajaError::Config(format!("failed to read credentials: {e}"))
-    })?;
+    let encrypted = std::fs::read(&path)
+        .map_err(|e| DarajaError::Config(format!("failed to read credentials: {e}")))?;
     config::decrypt_credentials(&encrypted, &key_bytes)
 }
 
@@ -391,9 +392,8 @@ fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), Dara
 
     let creds_path = credentials_path()?;
     if let Some(parent) = creds_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            DarajaError::Config(format!("failed to create config directory: {e}"))
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| DarajaError::Config(format!("failed to create config directory: {e}")))?;
     }
     std::fs::write(&creds_path, encrypted).map_err(|e| {
         DarajaError::Config(format!(
@@ -405,15 +405,17 @@ fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), Dara
 
     let key_file = key_path()?;
     std::fs::write(&key_file, sdk_key).map_err(|e| {
-        DarajaError::Config(format!("failed to write key to {}: {e}", key_file.display()))
+        DarajaError::Config(format!(
+            "failed to write key to {}: {e}",
+            key_file.display()
+        ))
     })?;
     let mut perms = std::fs::metadata(&key_file)
         .map_err(|e| DarajaError::Config(format!("failed to read key file metadata: {e}")))?
         .permissions();
     perms.set_mode(0o600);
-    std::fs::set_permissions(&key_file, perms).map_err(|e| {
-        DarajaError::Config(format!("failed to set key file permissions: {e}"))
-    })?;
+    std::fs::set_permissions(&key_file, perms)
+        .map_err(|e| DarajaError::Config(format!("failed to set key file permissions: {e}")))?;
 
     Ok(())
 }
@@ -437,9 +439,7 @@ fn personal_profile(env_label: &str, credentials: &Credentials) -> Result<Profil
             Environment::Production
         },
         merchant_number: credentials.shortcode.clone(),
-        credentials_path: profile_credentials_path("personal")?
-            .display()
-            .to_string(),
+        credentials_path: profile_credentials_path("personal")?.display().to_string(),
         initiator_configured: credentials.initiator_name.is_some()
             && credentials.initiator_password.is_some(),
     })
@@ -496,7 +496,9 @@ fn theme() -> ColorfulTheme {
 fn credentials_path() -> Result<PathBuf, DarajaError> {
     let home = std::env::var("HOME")
         .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
-    Ok(PathBuf::from(format!("{home}/.config/daraja/credentials.enc")))
+    Ok(PathBuf::from(format!(
+        "{home}/.config/daraja/credentials.enc"
+    )))
 }
 
 fn key_path() -> Result<PathBuf, DarajaError> {
@@ -626,8 +628,20 @@ async fn run() -> Result<(), DarajaError> {
             dry_run,
             idempotency_key,
         } => {
-            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes, dry_run, idempotency_key, cli.json)
-                .await
+            cmd_send(
+                to,
+                amount,
+                remarks,
+                occasion,
+                payment_type,
+                result_url,
+                timeout_url,
+                yes,
+                dry_run,
+                idempotency_key,
+                cli.json,
+            )
+            .await
         }
         Commands::Query {
             id,
@@ -672,14 +686,16 @@ async fn run() -> Result<(), DarajaError> {
             response_type,
             confirm_url,
             validation_url,
-        } => cmd_register(
-            shortcode,
-            response_type,
-            confirm_url,
-            validation_url,
-            cli.json,
-        )
-        .await,
+        } => {
+            cmd_register(
+                shortcode,
+                response_type,
+                confirm_url,
+                validation_url,
+                cli.json,
+            )
+            .await
+        }
         Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint, cli.json).await,
         Commands::Doctor => cmd_doctor(cli.json).await,
     }
@@ -773,10 +789,8 @@ fn validate_credentials_for_environment(
 }
 
 fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, DarajaError> {
-    let (initiator_name, initiator_password) = build_initiator_credentials(
-        opts.initiator_name.clone(),
-        opts.initiator_password.clone(),
-    )?;
+    let (initiator_name, initiator_password) =
+        build_initiator_credentials(opts.initiator_name.clone(), opts.initiator_password.clone())?;
 
     let env = opts
         .env
@@ -861,9 +875,7 @@ fn prompt_credentials_interactive(
             .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?
     };
     let passkey = if passkey.is_empty() {
-        defaults
-            .map(|c| c.passkey.to_string())
-            .unwrap_or(passkey)
+        defaults.map(|c| c.passkey.to_string()).unwrap_or(passkey)
     } else {
         passkey
     };
@@ -886,9 +898,7 @@ fn prompt_credentials_interactive(
     println!("  For send / query / balance / refund (optional):");
     println!();
 
-    let had_initiator = defaults
-        .and_then(|c| c.initiator_name.as_ref())
-        .is_some();
+    let had_initiator = defaults.and_then(|c| c.initiator_name.as_ref()).is_some();
     let add_initiator = Confirm::with_theme(&theme())
         .with_prompt("Configure initiator credentials?")
         .default(had_initiator || env_label == "sandbox")
@@ -933,10 +943,7 @@ fn prompt_credentials_interactive(
             password
         };
 
-        (
-            Some(Zeroizing::new(name)),
-            Some(Zeroizing::new(password)),
-        )
+        (Some(Zeroizing::new(name)), Some(Zeroizing::new(password)))
     } else {
         (None, None)
     };
@@ -955,7 +962,10 @@ fn print_init_success(env_label: &str, sdk_key: &str) -> Result<(), DarajaError>
     let key_path = key_path()?;
     println!();
     println!("  ✓ Encrypted credentials saved.");
-    println!("  ✓ SDK key saved to {} (owner-read-only)", key_path.display());
+    println!(
+        "  ✓ SDK key saved to {} (owner-read-only)",
+        key_path.display()
+    );
     println!();
     println!("  Your SDK key:");
     println!();
@@ -1186,7 +1196,9 @@ pub(crate) async fn load_daraja() -> Result<Daraja, DarajaError> {
     }
 
     let key = load_sdk_key()?;
-    unsafe { std::env::set_var("DARAJA_KEY", &key); }
+    unsafe {
+        std::env::set_var("DARAJA_KEY", &key);
+    }
     Daraja::from_env()
 }
 
@@ -1199,9 +1211,8 @@ pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
     let key = load_sdk_key()?;
     let key_bytes = config::extract_key_from_sdk_key(&key)?;
     let path = credentials_path()?;
-    let encrypted = std::fs::read(&path).map_err(|e| {
-        DarajaError::Config(format!("failed to read credentials: {e}"))
-    })?;
+    let encrypted = std::fs::read(&path)
+        .map_err(|e| DarajaError::Config(format!("failed to read credentials: {e}")))?;
     let creds = config::decrypt_credentials(&encrypted, &key_bytes)?;
     let environment = if key.starts_with("dsk_test_") {
         Environment::Sandbox
@@ -1276,8 +1287,7 @@ mod tests {
         let sdk_key = generate_sdk_key("test");
 
         let first = test_credentials("174379");
-        persist_personal_configuration("sandbox", &first, &sdk_key)
-            .expect("initial persist");
+        persist_personal_configuration("sandbox", &first, &sdk_key).expect("initial persist");
 
         let (active, loaded) = load_active_profile_context()
             .expect("load active context")
@@ -1286,8 +1296,7 @@ mod tests {
         assert_eq!(loaded.shortcode, "174379");
 
         let updated = test_credentials("254743121299");
-        persist_personal_configuration("sandbox", &updated, &sdk_key)
-            .expect("updated persist");
+        persist_personal_configuration("sandbox", &updated, &sdk_key).expect("updated persist");
 
         let (active, loaded) = load_active_profile_context()
             .expect("reload active context")
@@ -1465,7 +1474,9 @@ async fn cmd_prompt(
                 ("Callback URL", callback.clone()),
                 (
                     "Idempotency Key",
-                    idempotency_key.clone().unwrap_or_else(|| "auto-derived".into()),
+                    idempotency_key
+                        .clone()
+                        .unwrap_or_else(|| "auto-derived".into()),
                 ),
                 (
                     "Type",
@@ -1486,14 +1497,31 @@ async fn cmd_prompt(
 
     let transaction_type = payment_type.to_stk_transaction_type();
     let resp = match idempotency_key.as_deref() {
-        Some(key) => stk_push_with_type_and_idempotency_key(
-            daraja.client(), &phone, amount, &description, &reference, &callback,
-            transaction_type, key,
-        ).await?,
-        None => stk_push_with_type(
-            daraja.client(), &phone, amount, &description, &reference, &callback,
-            transaction_type,
-        ).await?,
+        Some(key) => {
+            stk_push_with_type_and_idempotency_key(
+                daraja.client(),
+                &phone,
+                amount,
+                &description,
+                &reference,
+                &callback,
+                transaction_type,
+                key,
+            )
+            .await?
+        }
+        None => {
+            stk_push_with_type(
+                daraja.client(),
+                &phone,
+                amount,
+                &description,
+                &reference,
+                &callback,
+                transaction_type,
+            )
+            .await?
+        }
     };
 
     println!("✓ Payment prompt sent");
@@ -1561,14 +1589,7 @@ async fn cmd_simulate(
     };
     let phone = validate_phone(&phone)?;
 
-    let resp = simulate_c2b(
-        daraja.client(),
-        &shortcode,
-        amount,
-        &phone,
-        &reference,
-    )
-    .await?;
+    let resp = simulate_c2b(daraja.client(), &shortcode, amount, &phone, &reference).await?;
 
     if json {
         println!(
@@ -1584,7 +1605,10 @@ async fn cmd_simulate(
         println!("✓ C2B payment simulated");
         println!();
         println!("  Conversation ID:           {}", resp.conversation_id);
-        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!(
+            "  Originator Conversation ID: {}",
+            resp.originator_conversation_id
+        );
         println!("  Response Description:      {}", resp.response_description);
         println!();
         println!("  Run `pesaraja receive` to catch the confirmation callback.");
@@ -1630,7 +1654,9 @@ async fn cmd_send(
                 ("Timeout URL", timeout_url.clone()),
                 (
                     "Idempotency Key",
-                    idempotency_key.clone().unwrap_or_else(|| "auto-derived".into()),
+                    idempotency_key
+                        .clone()
+                        .unwrap_or_else(|| "auto-derived".into()),
                 ),
             ],
         );
@@ -1644,14 +1670,33 @@ async fn cmd_send(
 
     let command = payment_type.to_b2c_command();
     let resp = match idempotency_key.as_deref() {
-        Some(key) => b2c_payment_with_idempotency_key(
-            daraja.client(), &phone, amount, command, &remarks, &occasion,
-            &result_url, &timeout_url, key,
-        ).await?,
-        None => b2c_payment(
-            daraja.client(), &phone, amount, command, &remarks, &occasion,
-            &result_url, &timeout_url,
-        ).await?,
+        Some(key) => {
+            b2c_payment_with_idempotency_key(
+                daraja.client(),
+                &phone,
+                amount,
+                command,
+                &remarks,
+                &occasion,
+                &result_url,
+                &timeout_url,
+                key,
+            )
+            .await?
+        }
+        None => {
+            b2c_payment(
+                daraja.client(),
+                &phone,
+                amount,
+                command,
+                &remarks,
+                &occasion,
+                &result_url,
+                &timeout_url,
+            )
+            .await?
+        }
     };
 
     if json {
@@ -1669,7 +1714,10 @@ async fn cmd_send(
         println!("✓ Payment sent");
         println!();
         println!("  Conversation ID:           {}", resp.conversation_id);
-        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!(
+            "  Originator Conversation ID: {}",
+            resp.originator_conversation_id
+        );
         println!("  Response Code:             {}", resp.response_code);
         println!("  Response Description:      {}", resp.response_description);
         println!();
@@ -1713,7 +1761,10 @@ async fn cmd_query(
         println!("✓ Transaction query sent");
         println!();
         println!("  Conversation ID:           {}", resp.conversation_id);
-        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!(
+            "  Originator Conversation ID: {}",
+            resp.originator_conversation_id
+        );
         println!("  Response Code:             {}", resp.response_code);
         println!("  Response Description:      {}", resp.response_description);
         println!();
@@ -1722,7 +1773,11 @@ async fn cmd_query(
     Ok(())
 }
 
-async fn cmd_balance(result_url: String, timeout_url: String, json: bool) -> Result<(), DarajaError> {
+async fn cmd_balance(
+    result_url: String,
+    timeout_url: String,
+    json: bool,
+) -> Result<(), DarajaError> {
     let daraja = load_daraja().await?;
 
     let resp = query_balance(daraja.client(), &result_url, &timeout_url).await?;
@@ -1743,7 +1798,10 @@ async fn cmd_balance(result_url: String, timeout_url: String, json: bool) -> Res
         println!("✓ Balance query sent");
         println!();
         println!("  Conversation ID:           {}", resp.conversation_id);
-        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!(
+            "  Originator Conversation ID: {}",
+            resp.originator_conversation_id
+        );
         println!("  Response Code:             {}", resp.response_code);
         println!("  Response Description:      {}", resp.response_description);
         println!("  (Balance arrives asynchronously at your result URL)");
@@ -1779,7 +1837,9 @@ async fn cmd_refund(
                 ("Timeout URL", timeout_url.clone()),
                 (
                     "Idempotency Key",
-                    idempotency_key.clone().unwrap_or_else(|| "auto-derived".into()),
+                    idempotency_key
+                        .clone()
+                        .unwrap_or_else(|| "auto-derived".into()),
                 ),
             ],
         );
@@ -1789,20 +1849,44 @@ async fn cmd_refund(
     let daraja = load_daraja().await?;
 
     let resp = match idempotency_key.as_deref() {
-        Some(key) => reverse_transaction_with_idempotency_key(
-            daraja.client(), &id, amount, &receiver, &receiver_type, &remarks,
-            &occasion, &result_url, &timeout_url, key,
-        ).await?,
-        None => reverse_transaction(
-            daraja.client(), &id, amount, &receiver, &receiver_type, &remarks,
-            &occasion, &result_url, &timeout_url,
-        ).await?,
+        Some(key) => {
+            reverse_transaction_with_idempotency_key(
+                daraja.client(),
+                &id,
+                amount,
+                &receiver,
+                &receiver_type,
+                &remarks,
+                &occasion,
+                &result_url,
+                &timeout_url,
+                key,
+            )
+            .await?
+        }
+        None => {
+            reverse_transaction(
+                daraja.client(),
+                &id,
+                amount,
+                &receiver,
+                &receiver_type,
+                &remarks,
+                &occasion,
+                &result_url,
+                &timeout_url,
+            )
+            .await?
+        }
     };
 
     println!("✓ Refund initiated");
     println!();
     println!("  Conversation ID:           {}", resp.conversation_id);
-    println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+    println!(
+        "  Originator Conversation ID: {}",
+        resp.originator_conversation_id
+    );
     println!("  Response Code:             {}", resp.response_code);
     println!("  Response Description:      {}", resp.response_description);
     println!();
@@ -1838,9 +1922,8 @@ async fn cmd_webhook(url: String, endpoint: Option<String>, json: bool) -> Resul
         format!("{base}/{endpoint}")
     };
     let body = sample_c2b_confirmation();
-    let payload = serde_json::to_string(&body).map_err(|e| {
-        DarajaError::Config(format!("failed to serialize sample payload: {e}"))
-    })?;
+    let payload = serde_json::to_string(&body)
+        .map_err(|e| DarajaError::Config(format!("failed to serialize sample payload: {e}")))?;
 
     let resp = reqwest::Client::new()
         .post(&target)
@@ -1914,7 +1997,10 @@ async fn cmd_register(
         println!("✓ C2B URLs registered");
         println!();
         println!("  Conversation ID:           {}", resp.conversation_id);
-        println!("  Originator Conversation ID: {}", resp.originator_conversation_id);
+        println!(
+            "  Originator Conversation ID: {}",
+            resp.originator_conversation_id
+        );
         println!("  Response Description:      {}", resp.response_description);
         println!();
     }
@@ -1944,10 +2030,7 @@ async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
     checks.push(CheckItem {
         ok: creds_exist,
         message: if creds_exist {
-            format!(
-                "Credentials encrypted at rest ({})",
-                creds_path.display()
-            )
+            format!("Credentials encrypted at rest ({})", creds_path.display())
         } else {
             "Credentials file not found".to_string()
         },
@@ -2131,14 +2214,12 @@ async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         let sandbox_cert_ok = std::env::var("DARAJA_CERT_PATH")
             .map(|p| std::path::Path::new(&p).exists())
             .or_else(|_| {
-                std::env::var("DARAJA_SANDBOX_CERT_PATH")
-                    .map(|p| std::path::Path::new(&p).exists())
+                std::env::var("DARAJA_SANDBOX_CERT_PATH").map(|p| std::path::Path::new(&p).exists())
             })
             .unwrap_or_else(|_| {
                 std::env::var("HOME")
                     .map(|home| {
-                        std::path::Path::new(&format!("{home}/.config/daraja/sandbox.cer"))
-                            .exists()
+                        std::path::Path::new(&format!("{home}/.config/daraja/sandbox.cer")).exists()
                     })
                     .unwrap_or(false)
             });

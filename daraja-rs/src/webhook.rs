@@ -38,7 +38,10 @@ pub fn validate_c2b_confirmation(body: &[u8]) -> Result<C2bConfirmation, DarajaE
     validate_required_text("transaction ID", &confirmation.trans_id, 128)
         .map_err(callback_validation_error)?;
     if confirmation.trans_time.len() != 14
-        || !confirmation.trans_time.bytes().all(|byte| byte.is_ascii_digit())
+        || !confirmation
+            .trans_time
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
     {
         return Err(DarajaError::InvalidCallback(
             "transaction time must contain 14 digits".into(),
@@ -70,9 +73,8 @@ fn is_positive_decimal(value: &str) -> bool {
     if parts.next().is_some()
         || whole.is_empty()
         || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || fraction.is_some_and(|part| {
-            part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit())
-        })
+        || fraction
+            .is_some_and(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
     {
         return false;
     }
@@ -168,7 +170,10 @@ mod tests {
     #[test]
     fn verify_callback_rejects_whitespace_only_body() {
         let result = verify_callback(b"   ", Some("sig"));
-        assert!(matches!(result, Err(DarajaError::CallbackVerificationUnavailable)));
+        assert!(matches!(
+            result,
+            Err(DarajaError::CallbackVerificationUnavailable)
+        ));
     }
 
     #[test]
@@ -180,7 +185,10 @@ mod tests {
     #[test]
     fn verify_callback_fails_closed_until_crypto_is_configured() {
         let result = verify_callback(b"{\"valid\":true}", Some("abc123signature"));
-        assert!(matches!(result, Err(DarajaError::CallbackVerificationUnavailable)));
+        assert!(matches!(
+            result,
+            Err(DarajaError::CallbackVerificationUnavailable)
+        ));
     }
 
     #[test]
@@ -245,7 +253,8 @@ mod tests {
 
     #[test]
     fn c2b_deduplication_key_uses_transaction_id() {
-        let callback = validate_c2b_confirmation(br#"{
+        let callback = validate_c2b_confirmation(
+            br#"{
             "TransactionType": "Pay Bill",
             "TransID": "QEJ78H8JKR",
             "TransTime": "20240101120000",
@@ -253,7 +262,9 @@ mod tests {
             "BusinessShortCode": "174379",
             "BillRefNumber": "Test",
             "MSISDN": "254712345678"
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         assert_eq!(
             c2b_callback_deduplication_key(&callback),
             "c2b:transaction:QEJ78H8JKR"

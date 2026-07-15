@@ -1,4 +1,4 @@
-use crate::{load_daraja, load_shortcode, load_sdk_key};
+use crate::{load_daraja, load_sdk_key, load_shortcode};
 use daraja_rs::api::c2b::register_urls;
 use daraja_rs::error::DarajaError;
 use daraja_rs::webhook::{C2bConfirmation, validate_c2b_confirmation};
@@ -59,14 +59,15 @@ pub async fn run(port: u16) -> Result<(), DarajaError> {
     println!();
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = TcpListener::bind(addr).await.map_err(|e| {
-        DarajaError::Config(format!("failed to bind to port {port}: {e}"))
-    })?;
+    let listener = TcpListener::bind(addr)
+        .await
+        .map_err(|e| DarajaError::Config(format!("failed to bind to port {port}: {e}")))?;
 
     loop {
-        let (stream, _) = listener.accept().await.map_err(|e| {
-            DarajaError::Config(format!("failed to accept connection: {e}"))
-        })?;
+        let (stream, _) = listener
+            .accept()
+            .await
+            .map_err(|e| DarajaError::Config(format!("failed to accept connection: {e}")))?;
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
             let service = service_fn(handle_request);

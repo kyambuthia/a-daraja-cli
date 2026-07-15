@@ -9,8 +9,8 @@ pub mod error;
 pub mod idempotency;
 pub mod security;
 pub mod types;
-pub mod webhook;
 pub mod validation;
+pub mod webhook;
 
 pub mod api;
 
@@ -35,8 +35,7 @@ impl Daraja {
 
     /// Create from `DARAJA_KEY` env var.
     pub fn from_env() -> Result<Self, DarajaError> {
-        let key = std::env::var("DARAJA_KEY")
-            .map_err(|_| DarajaError::MissingApiKey)?;
+        let key = std::env::var("DARAJA_KEY").map_err(|_| DarajaError::MissingApiKey)?;
         Self::from_key(&key)
     }
 
@@ -80,7 +79,9 @@ mod tests {
     #[test]
     fn from_env_missing_key_is_error() {
         // Ensure DARAJA_KEY is not set in test env
-        unsafe { std::env::remove_var("DARAJA_KEY"); }
+        unsafe {
+            std::env::remove_var("DARAJA_KEY");
+        }
         let result = Daraja::from_env();
         assert!(result.is_err());
     }
@@ -88,7 +89,9 @@ mod tests {
     #[test]
     fn from_env_reads_key() {
         let key = format!("dsk_test_{}", "a".repeat(44));
-        unsafe { std::env::set_var("DARAJA_KEY", key); }
+        unsafe {
+            std::env::set_var("DARAJA_KEY", key);
+        }
         let result = Daraja::from_env();
         // Should fail on key parsing (invalid base64), not on missing env var
         assert!(result.is_err());
@@ -97,7 +100,9 @@ mod tests {
             Err(DarajaError::MissingApiKey) => panic!("should not be missing key"),
             _ => {} // expected — key parse failure or no creds file
         }
-        unsafe { std::env::remove_var("DARAJA_KEY"); }
+        unsafe {
+            std::env::remove_var("DARAJA_KEY");
+        }
     }
 
     #[test]
@@ -112,7 +117,7 @@ mod tests {
         let result = Daraja::from_key(&key);
         // Will fail on missing credentials file, not on key format
         match result {
-            Err(DarajaError::Config(_)) => {} // expected: no creds file
+            Err(DarajaError::Config(_)) => {}     // expected: no creds file
             Err(DarajaError::Encryption(_)) => {} // also possible
             Err(e) => panic!("unexpected error: {:?}", e),
             Ok(_) => panic!("should fail without credentials file"),

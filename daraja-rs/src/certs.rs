@@ -123,7 +123,7 @@ mod tests {
 
     fn write_temp_cert(dir: &tempfile::TempDir) -> PathBuf {
         use rand::rngs::OsRng;
-        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+        use rsa::{RsaPrivateKey, pkcs8::EncodePublicKey};
 
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");

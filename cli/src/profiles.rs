@@ -1,9 +1,11 @@
-use daraja_rs::config::{decrypt_credentials, encrypt_credentials, extract_key_from_sdk_key, Credentials};
+use daraja_rs::config::{
+    Credentials, decrypt_credentials, encrypt_credentials, extract_key_from_sdk_key,
+};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::Environment;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileType {
@@ -71,9 +73,8 @@ pub fn save_profile(
     let encrypted = encrypt_credentials(credentials, &key_bytes)?;
     let creds_path = PathBuf::from(&profile.credentials_path);
     if let Some(parent) = creds_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            DarajaError::Config(format!("failed to create profile directory: {e}"))
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| DarajaError::Config(format!("failed to create profile directory: {e}")))?;
     }
     std::fs::write(&creds_path, encrypted).map_err(|e| {
         DarajaError::Config(format!(
@@ -93,9 +94,8 @@ pub fn save_profile(
 pub fn load_registry() -> Result<ProfileRegistry, DarajaError> {
     let path = profiles_registry_path()?;
     if path.exists() {
-        let text = std::fs::read_to_string(&path).map_err(|e| {
-            DarajaError::Config(format!("failed to read profile registry: {e}"))
-        })?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| DarajaError::Config(format!("failed to read profile registry: {e}")))?;
         return serde_json::from_str(&text)
             .map_err(|e| DarajaError::Config(format!("failed to parse profile registry: {e}")));
     }
@@ -106,15 +106,13 @@ pub fn load_registry() -> Result<ProfileRegistry, DarajaError> {
 pub fn save_registry(registry: &ProfileRegistry) -> Result<(), DarajaError> {
     let path = profiles_registry_path()?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            DarajaError::Config(format!("failed to create config directory: {e}"))
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| DarajaError::Config(format!("failed to create config directory: {e}")))?;
     }
     let text = serde_json::to_string_pretty(registry)
         .map_err(|e| DarajaError::Config(format!("failed to serialize profile registry: {e}")))?;
-    std::fs::write(&path, text).map_err(|e| {
-        DarajaError::Config(format!("failed to write profile registry: {e}"))
-    })?;
+    std::fs::write(&path, text)
+        .map_err(|e| DarajaError::Config(format!("failed to write profile registry: {e}")))?;
     set_private_permissions(&path)
 }
 
@@ -163,7 +161,10 @@ pub fn legacy_registry() -> Result<ProfileRegistry, DarajaError> {
 
 pub fn active_profile<'a>(registry: &'a ProfileRegistry) -> Option<&'a Profile> {
     let name = registry.active_profile.as_deref()?;
-    registry.profiles.iter().find(|profile| profile.name == name)
+    registry
+        .profiles
+        .iter()
+        .find(|profile| profile.name == name)
 }
 
 pub fn profile_summary(profile: &Profile) -> serde_json::Value {
@@ -313,7 +314,10 @@ mod tests {
             profile_type: ProfileType::Personal,
             environment: Environment::Sandbox,
             merchant_number: "254743121299".into(),
-            credentials_path: config_dir.join("profiles/personal.enc").display().to_string(),
+            credentials_path: config_dir
+                .join("profiles/personal.enc")
+                .display()
+                .to_string(),
             initiator_configured: true,
         };
         save_profile(&profile, &creds, &sdk_key).expect("save profile");
