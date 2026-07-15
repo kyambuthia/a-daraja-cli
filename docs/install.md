@@ -30,10 +30,12 @@ pesaraja --help
 
 ## Install With `install.sh`
 
-The installer first tries a prebuilt GitHub release for `v0.1.0`. If no binary exists for your platform, it falls back to `cargo install`.
+The installer uses a prebuilt release only when `PESARAJA_VERSION` is set. If
+that artifact is unavailable, it falls back to `cargo install`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kyambuthia/pesaraja/trunk/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kyambuthia/pesaraja/trunk/install.sh | \
+  PESARAJA_VERSION=v0.1.0 sh
 ```
 
 If the fallback path runs, Cargo must be installed.

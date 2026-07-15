@@ -153,7 +153,7 @@ pesaraja refund \
 ## TypeScript SDK
 
 ```typescript
-import { Daraja, parseStkCallback, stkCallbackPaid } from "@pesaraja/sdk";
+import { Daraja, matchStkCallback, parseStkCallback } from "@pesaraja/sdk";
 
 const daraja = await Daraja.fromEnv();
 
@@ -163,6 +163,7 @@ const response = await daraja.prompt({
   callbackUrl: "https://example.com/api/mpesa/callback",
   reference: "ORDER-123",
   description: "Order payment",
+  idempotencyKey: "order:ORDER-123:stk",
 });
 
 console.log(response.CheckoutRequestID);
@@ -174,24 +175,41 @@ STK callback example:
 
 ```typescript
 const callback = parseStkCallback(requestBody);
-if (stkCallbackPaid(callback)) {
-  // Mark the order paid using callback.CheckoutRequestID and metadata.
-}
+const matched = matchStkCallback(callback, {
+  checkoutRequestId: order.checkoutRequestId,
+  merchantRequestId: order.merchantRequestId,
+  amount: order.amount,
+});
+
+// matched.receiptNumber is a replay-deduplication input, not proof that the
+// sender was Safaricom. Reconcile before irreversible fulfilment.
 ```
 
 C2B callback helpers:
 
 ```typescript
-import { parseC2bConfirmation, verifyCallback } from "@pesaraja/sdk";
+import {
+  c2bCallbackDeduplicationKey,
+  parseC2bConfirmation,
+  verifyCallback,
+} from "@pesaraja/sdk";
 
 verifyCallback(rawBody, signatureHeader);
 const confirmation = parseC2bConfirmation(JSON.parse(rawBody));
+const replayKey = c2bCallbackDeduplicationKey(confirmation);
 ```
 
 Current limitation: callback cryptographic verification is not configured. The SDK
 fails closed when `verifyCallback` is called; do not fulfill orders from an
-unverified callback. The CLI `receive` command is sandbox-only and labels local
+unverified callback. Matching expected IDs and amounts is not authentication.
+The CLI `receive` command is sandbox-only and labels local
 callbacks as unverified.
+
+For `prompt`, `send`, and `refund`, provide a stable `idempotencyKey` (or
+`--idempotency-key` in the CLI) derived from your order, disbursement, or
+reversal record. Reusing a key with different parameters is rejected. If the
+SDK reports an unknown outcome, query/reconcile the transaction rather than
+resending it with a new key.
 
 ## Rust SDK
 

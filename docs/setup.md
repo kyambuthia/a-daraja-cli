@@ -26,6 +26,12 @@ DARAJA_KEY=dsk_test_...
 
 The CLI also saves the key locally, so normal CLI commands do not require `DARAJA_KEY` to be exported.
 
+The local key and encrypted credential blob are stored under the same OS user.
+Encryption protects against accidental disclosure and other users when file
+permissions are enforced; it does not protect against compromise of that user
+account. For deployed production applications, inject the key through a secret
+manager rather than copying the local key file.
+
 ## Non-Interactive Setup
 
 Sandbox:

@@ -1,6 +1,6 @@
 // Encrypted credential management.
 //
-// During `mpesa init`, Daraja credentials (consumer key, secret, passkey, etc.)
+// During `pesaraja init`, Daraja credentials (consumer key, secret, passkey, etc.)
 // are encrypted with AES-256-GCM and stored at `~/.config/daraja/credentials.enc`.
 //
 // The SDK key (`dsk_test_...` / `dsk_live_...`) IS the AES decryption key,

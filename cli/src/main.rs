@@ -67,7 +67,7 @@ enum Commands {
         /// Customer phone number (254XXXXXXXXX or 07XXXXXXXX)
         #[arg(long)]
         phone: String,
-        /// Amount in KES (whole shillings; decimals are truncated)
+        /// Amount in KES (positive whole shillings)
         #[arg(long)]
         amount: String,
         /// Payment description shown on the customer's phone
@@ -113,7 +113,7 @@ enum Commands {
         /// Customer phone number (sandbox test MSISDN)
         #[arg(long, default_value = "254708374149")]
         phone: String,
-        /// Amount in KES (whole shillings; decimals are truncated)
+        /// Amount in KES (positive whole shillings)
         #[arg(long)]
         amount: String,
         /// Bill reference number
@@ -152,7 +152,7 @@ enum Commands {
         /// Recipient phone number
         #[arg(long)]
         to: String,
-        /// Amount in KES (whole shillings; decimals are truncated)
+        /// Amount in KES (positive whole shillings)
         #[arg(long)]
         amount: String,
         /// Payment remarks shown in the transaction
@@ -216,7 +216,7 @@ enum Commands {
         /// M-Pesa transaction ID to reverse
         #[arg(long)]
         id: String,
-        /// Amount to refund in KES (whole shillings; decimals are truncated)
+        /// Amount to refund in KES (positive whole shillings)
         #[arg(long)]
         amount: String,
         /// Receiver party shortcode
@@ -1845,7 +1845,6 @@ async fn cmd_webhook(url: String, endpoint: Option<String>, json: bool) -> Resul
     let resp = reqwest::Client::new()
         .post(&target)
         .header("Content-Type", "application/json")
-        .header("X-Safaricom-Signature", "test-signature")
         .body(payload)
         .send()
         .await

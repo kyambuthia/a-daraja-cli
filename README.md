@@ -75,8 +75,15 @@ await d.prompt({
   phone: "254712345678",
   amount: 500,
   callbackUrl: "https://your-server.com/api/mpesa/callback",
+  idempotencyKey: "order:ORDER-123:stk",
 });
 ```
+
+Use the same idempotency key only for the exact same business operation. An
+unknown network outcome must be reconciled before retrying with a new key.
+
+Callbacks are untrusted input. Parsing or matching a callback does not
+authenticate its sender; reconcile payment state before fulfilling an order.
 
 Callback route examples: `daraja-ts/examples/nextjs-app-router/` and `daraja-ts/examples/express/`.
 
