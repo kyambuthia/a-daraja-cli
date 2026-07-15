@@ -182,8 +182,8 @@ mod tests {
     fn phone_numbers_are_normalized_to_254_format() {
         fn normalize(phone: &str) -> String {
             let phone = phone.trim_start_matches('+');
-            if phone.starts_with('0') {
-                format!("254{}", &phone[1..])
+            if let Some(local) = phone.strip_prefix('0') {
+                format!("254{local}")
             } else {
                 phone.to_string()
             }

@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)] // Keep private CLI tests beside their helper functions.
+
 mod input;
 mod profiles;
 mod receive;
@@ -39,6 +41,8 @@ const DEFAULT_CALLBACK: &str = "https://example.com/callback";
 const DEFAULT_RESULT_URL: &str = "https://example.com/result";
 const DEFAULT_TIMEOUT_URL: &str = "https://example.com/timeout";
 const SANDBOX_PASSKEY: &str = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
+
+type OptionalInitiatorCredentials = (Option<Zeroizing<String>>, Option<Zeroizing<String>>);
 
 #[derive(Parser)]
 #[command(
@@ -509,10 +513,10 @@ fn key_path() -> Result<PathBuf, DarajaError> {
 
 /// Load the SDK key: try DARAJA_KEY env var first, then fall back to ~/.config/daraja/key.
 pub(crate) fn load_sdk_key() -> Result<String, DarajaError> {
-    if let Ok(key) = std::env::var("DARAJA_KEY") {
-        if !key.is_empty() {
-            return Ok(key);
-        }
+    if let Ok(key) = std::env::var("DARAJA_KEY")
+        && !key.is_empty()
+    {
+        return Ok(key);
     }
     let path = key_path()?;
     let key = std::fs::read_to_string(&path)
@@ -740,7 +744,7 @@ fn prompt_existing_credentials_action(existing: &Credentials) -> Result<InitActi
 fn build_initiator_credentials(
     name: Option<String>,
     password: Option<String>,
-) -> Result<(Option<Zeroizing<String>>, Option<Zeroizing<String>>), DarajaError> {
+) -> Result<OptionalInitiatorCredentials, DarajaError> {
     match (name, password) {
         (Some(n), Some(p)) => Ok((Some(Zeroizing::new(n)), Some(Zeroizing::new(p)))),
         (None, None) => Ok((None, None)),
@@ -1411,6 +1415,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serializes process-wide HOME mutations for this test.
     async fn load_daraja_rejects_wrong_sandbox_passkey() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let _home = seed_profile_home("174379", "wrong-passkey");
@@ -1435,6 +1440,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the user-facing Clap command fields.
 async fn cmd_prompt(
     phone: String,
     amount: String,
@@ -1618,6 +1624,7 @@ async fn cmd_simulate(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the user-facing Clap command fields.
 async fn cmd_send(
     to: String,
     amount: String,
@@ -1811,6 +1818,7 @@ async fn cmd_balance(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the user-facing Clap command fields.
 async fn cmd_refund(
     id: String,
     amount: u64,

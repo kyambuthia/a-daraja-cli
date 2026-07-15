@@ -90,8 +90,8 @@ pub fn current_timestamp() -> String {
 /// Accepts inputs like `+2547...`, `07...`, or `2547...`.
 pub fn normalize_phone(phone: &str) -> String {
     let phone = phone.trim().trim_start_matches('+');
-    if phone.starts_with('0') {
-        format!("254{}", &phone[1..])
+    if let Some(local) = phone.strip_prefix('0') {
+        format!("254{local}")
     } else {
         phone.to_string()
     }
@@ -200,7 +200,7 @@ mod tests {
     fn current_timestamp_is_recent() {
         let ts = current_timestamp();
         let year: i32 = ts[0..4].parse().unwrap();
-        assert!(year >= 2024 && year <= 2099, "year should be reasonable");
+        assert!((2024..=2099).contains(&year), "year should be reasonable");
     }
 
     // ── Edge cases ───────────────────────────────────────────

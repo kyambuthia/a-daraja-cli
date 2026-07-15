@@ -159,7 +159,7 @@ pub fn legacy_registry() -> Result<ProfileRegistry, DarajaError> {
     })
 }
 
-pub fn active_profile<'a>(registry: &'a ProfileRegistry) -> Option<&'a Profile> {
+pub fn active_profile(registry: &ProfileRegistry) -> Option<&Profile> {
     let name = registry.active_profile.as_deref()?;
     registry
         .profiles

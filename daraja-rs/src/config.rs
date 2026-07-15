@@ -288,7 +288,7 @@ mod tests {
     fn extract_key_fails_on_wrong_length_after_decode() {
         // Base64 of 16 bytes = 24 chars, but we need 44 (for 32 bytes)
         let short_b64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[0u8; 16]);
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 16]);
         let result = extract_key_from_sdk_key(&format!("dsk_test_{}", short_b64));
         assert!(result.is_err(), "16-byte key should be rejected (need 32)");
     }

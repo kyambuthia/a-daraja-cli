@@ -134,10 +134,10 @@ fn print_callback(kind: &str, conf: &C2bConfirmation) {
 
 fn format_amount(amount: &str) -> String {
     let amount = amount.trim();
-    if let Some((whole, frac)) = amount.split_once('.') {
-        if frac.chars().all(|c| c == '0') {
-            return format!("KES {whole}");
-        }
+    if let Some((whole, frac)) = amount.split_once('.')
+        && frac.chars().all(|c| c == '0')
+    {
+        return format!("KES {whole}");
     }
     format!("KES {amount}")
 }

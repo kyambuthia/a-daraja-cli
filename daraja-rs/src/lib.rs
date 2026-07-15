@@ -96,9 +96,8 @@ mod tests {
         // Should fail on key parsing (invalid base64), not on missing env var
         assert!(result.is_err());
         // The error should NOT be MissingApiKey
-        match result {
-            Err(DarajaError::MissingApiKey) => panic!("should not be missing key"),
-            _ => {} // expected — key parse failure or no creds file
+        if let Err(DarajaError::MissingApiKey) = result {
+            panic!("should not be missing key");
         }
         unsafe {
             std::env::remove_var("DARAJA_KEY");
