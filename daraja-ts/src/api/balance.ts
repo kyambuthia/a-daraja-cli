@@ -19,5 +19,5 @@ export async function queryBalance(
     Remarks: "Balance check",
     QueueTimeOutURL: options.timeoutUrl,
     ResultURL: options.resultUrl,
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }

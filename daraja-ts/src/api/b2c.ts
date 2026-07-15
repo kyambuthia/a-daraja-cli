@@ -25,5 +25,5 @@ export async function b2cPayment(
     QueueTimeOutURL: options.timeoutUrl,
     ResultURL: options.resultUrl,
     Occasion: options.occasion ?? "",
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }

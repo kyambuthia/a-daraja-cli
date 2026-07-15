@@ -33,7 +33,7 @@ export async function stkPush(
     CallBackURL: options.callbackUrl,
     AccountReference: options.reference ?? "Payment",
     TransactionDesc: options.description ?? "Payment",
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }
 
 export async function stkPushQuery(

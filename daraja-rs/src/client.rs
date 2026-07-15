@@ -9,7 +9,7 @@
 use crate::auth::TokenManager;
 use crate::config::Credentials;
 use crate::error::DarajaError;
-use crate::idempotency::{IdempotencyStore, Status as IdempotencyStatus};
+use crate::idempotency::{AcquireResult, IdempotencyStore};
 use crate::types::Environment;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -25,6 +25,21 @@ pub struct DarajaClient {
     idempotency: Option<Mutex<IdempotencyStore>>,
 }
 
+/// Per-request controls for mutating Daraja operations.
+#[derive(Debug, Clone, Default)]
+pub struct RequestOptions {
+    /// Stable business-operation key supplied by the caller.
+    pub idempotency_key: Option<String>,
+}
+
+impl RequestOptions {
+    pub fn with_idempotency_key(key: impl Into<String>) -> Self {
+        Self {
+            idempotency_key: Some(key.into()),
+        }
+    }
+}
+
 impl DarajaClient {
     /// Create a new client with credentials and environment.
     pub fn new(credentials: Credentials, environment: Environment) -> Result<Self, DarajaError> {
@@ -33,10 +48,9 @@ impl DarajaClient {
             credentials.consumer_secret.to_string(),
             environment,
         );
-        let idempotency = Some(Mutex::new(
-            default_idempotency_store()
-                .map_err(|e| DarajaError::Config(format!("failed to open idempotency cache: {e}")))?,
-        ));
+        let idempotency = Some(Mutex::new(default_idempotency_store().map_err(|e| {
+            DarajaError::Config(format!("failed to open idempotency cache: {e}"))
+        })?));
 
         Ok(DarajaClient {
             inner: reqwest::Client::new(),
@@ -108,72 +122,118 @@ impl DarajaClient {
         path: &str,
         body: &T,
     ) -> Result<R, DarajaError> {
+        self.post_with_options(path, body, RequestOptions::default())
+            .await
+    }
+
+    /// Send a POST request with an optional stable, caller-supplied idempotency key.
+    pub async fn post_with_options<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &T,
+        options: RequestOptions,
+    ) -> Result<R, DarajaError> {
         let url = format!("{}{}", self.base_url(), path);
         let body_bytes = serde_json::to_vec(body)
             .map_err(|e| DarajaError::Network(format!("serialize failed: {}", e)))?;
 
-        if let Some(cached) = self.check_idempotency_cache(&body_bytes)? {
+        let fingerprint = request_fingerprint(&body_bytes);
+        let caller_key = options
+            .idempotency_key
+            .unwrap_or_else(|| idempotency_key_for_body(&body_bytes));
+        validate_idempotency_key(&caller_key)?;
+        let scoped_key = scoped_idempotency_key(
+            self.environment,
+            &self.credentials.shortcode,
+            path,
+            &caller_key,
+        );
+
+        if let Some(cached) = self.check_idempotency_cache(&scoped_key, &fingerprint)? {
             return serde_json::from_slice(&cached).map_err(|e| {
                 DarajaError::Network(format!("failed to parse cached response: {e}"))
             });
         }
 
-        let idempotency_key = idempotency_key_for_body(&body_bytes);
-        let response = self
-            .send_post(&url, &body_bytes, &idempotency_key, false)
-            .await?;
+        let response = match self.send_post(&url, &body_bytes, &caller_key, false).await {
+            Ok(response) => response,
+            Err(error) => {
+                self.save_idempotency_unknown(&scoped_key);
+                return Err(error);
+            }
+        };
         let status = response.status();
-        let response_bytes = response
-            .bytes()
-            .await
-            .map_err(|e| DarajaError::Network(format!("failed to read response: {e}")))?;
+        let response_bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.save_idempotency_unknown(&scoped_key);
+                return Err(DarajaError::Network(format!(
+                    "failed to read response: {error}"
+                )));
+            }
+        };
 
         if status.is_success() {
-            self.save_idempotency_success(&idempotency_key, &response_bytes);
-            serde_json::from_slice(&response_bytes).map_err(|e| {
+            let parsed = serde_json::from_slice(&response_bytes).map_err(|e| {
+                self.save_idempotency_unknown(&scoped_key);
                 DarajaError::Network(format!("failed to parse response: {e}"))
-            })
+            })?;
+            self.save_idempotency_success(&scoped_key, &response_bytes);
+            Ok(parsed)
         } else {
-            self.save_idempotency_failed(&idempotency_key);
+            self.save_idempotency_failed(&scoped_key);
             let body = String::from_utf8_lossy(&response_bytes);
             Err(DarajaError::Network(format!("HTTP {status}: {body}")))
         }
     }
 
-    fn check_idempotency_cache(&self, body: &[u8]) -> Result<Option<Vec<u8>>, DarajaError> {
+    fn check_idempotency_cache(
+        &self,
+        scoped_key: &str,
+        fingerprint: &str,
+    ) -> Result<Option<Vec<u8>>, DarajaError> {
         let Some(store) = &self.idempotency else {
             return Ok(None);
         };
 
-        let key = idempotency_key_for_body(body);
-        let store = store.lock().expect("idempotency store mutex poisoned");
-        store.cleanup_expired();
+        let mut store = store
+            .lock()
+            .map_err(|_| DarajaError::Config("idempotency store lock poisoned".into()))?;
+        let result = store
+            .acquire(scoped_key, fingerprint)
+            .map_err(|e| DarajaError::Config(format!("failed to reserve idempotency key: {e}")))?;
 
-        match store.get_status(&key) {
-            Some(IdempotencyStatus::Success(response)) => Ok(Some(response)),
-            Some(IdempotencyStatus::Pending) => Err(DarajaError::IdempotencyConflict),
-            Some(IdempotencyStatus::Failed) | None => {
-                store.save_pending(&key);
-                Ok(None)
-            }
+        match result {
+            AcquireResult::Acquired => Ok(None),
+            AcquireResult::Success(response) => Ok(Some(response)),
+            AcquireResult::Pending => Err(DarajaError::IdempotencyConflict),
+            AcquireResult::FingerprintMismatch => Err(DarajaError::IdempotencyKeyReused),
+            AcquireResult::Failed => Err(DarajaError::IdempotencyPreviousFailed),
+            AcquireResult::Unknown => Err(DarajaError::IdempotencyOutcomeUnknown),
         }
     }
 
     fn save_idempotency_success(&self, key: &str, response: &[u8]) {
-        if let Some(store) = &self.idempotency {
-            store
-                .lock()
-                .expect("idempotency store mutex poisoned")
-                .save_success(key, response);
+        if let Some(store) = &self.idempotency
+            && let Ok(store) = store.lock()
+        {
+            let _ = store.save_success(key, response);
         }
     }
 
     fn save_idempotency_failed(&self, key: &str) {
-        if let Some(store) = &self.idempotency {
-            store
-                .lock()
-                .expect("idempotency store mutex poisoned")
-                .save_failed(key);
+        if let Some(store) = &self.idempotency
+            && let Ok(store) = store.lock()
+        {
+            let _ = store.save_failed(key);
+        }
+    }
+
+    fn save_idempotency_unknown(&self, key: &str) {
+        if let Some(store) = &self.idempotency
+            && let Ok(store) = store.lock()
+        {
+            let _ = store.save_unknown(key);
         }
     }
 
@@ -253,6 +313,37 @@ pub fn idempotency_key_for_body(body: &[u8]) -> String {
     uuid::Uuid::from_bytes(bytes).to_string()
 }
 
+fn request_fingerprint(body: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(body))
+}
+
+fn scoped_idempotency_key(
+    environment: Environment,
+    shortcode: &str,
+    path: &str,
+    caller_key: &str,
+) -> String {
+    let environment = match environment {
+        Environment::Sandbox => "sandbox",
+        Environment::Production => "production",
+    };
+    request_fingerprint(format!("{environment}\0{shortcode}\0{path}\0{caller_key}").as_bytes())
+}
+
+fn validate_idempotency_key(key: &str) -> Result<(), DarajaError> {
+    if key.is_empty()
+        || key.len() > 128
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err(DarajaError::Config(
+            "idempotency key must be 1-128 ASCII letters, numbers, '.', ':', '_' or '-'".into(),
+        ));
+    }
+    Ok(())
+}
+
 // ── Idempotency ──────────────────────────────────────────────
 
 use uuid::Uuid;
@@ -326,7 +417,9 @@ mod tests {
     fn nil_uuid_fails_validation() {
         // All-zeros UUID should probably not be accepted as a valid idempotency key
         // (it's a sentinel value, not a random key)
-        assert!(!is_valid_idempotency_key("00000000-0000-0000-0000-000000000000"));
+        assert!(!is_valid_idempotency_key(
+            "00000000-0000-0000-0000-000000000000"
+        ));
     }
 
     // ── Edge cases ───────────────────────────────────────────
@@ -354,7 +447,10 @@ mod tests {
     fn mixed_case_uuid_passes_validation() {
         // Uuid::parse_str is case-insensitive per RFC 9562
         let key = generate_idempotency_key().to_uppercase();
-        assert!(is_valid_idempotency_key(&key), "UUID parse is case-insensitive");
+        assert!(
+            is_valid_idempotency_key(&key),
+            "UUID parse is case-insensitive"
+        );
     }
 
     #[test]
@@ -410,7 +506,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "bearer-tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "bearer-tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
@@ -419,9 +515,10 @@ mod tests {
             Mock::given(method("POST"))
                 .and(path("/mpesa/stkpush/v1/processrequest"))
                 .and(header("Authorization", "Bearer bearer-tok"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"ResponseCode": "0"})
-                ))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"ResponseCode": "0"})),
+                )
                 .expect(1)
                 .mount(&server)
                 .await;
@@ -433,8 +530,14 @@ mod tests {
             let req = serde_json::json!({"test": true});
 
             #[derive(Deserialize)]
-            struct Resp { #[serde(rename = "ResponseCode")] code: String }
-            let resp: Resp = client.post("/mpesa/stkpush/v1/processrequest", &req).await.unwrap();
+            struct Resp {
+                #[serde(rename = "ResponseCode")]
+                code: String,
+            }
+            let resp: Resp = client
+                .post("/mpesa/stkpush/v1/processrequest", &req)
+                .await
+                .unwrap();
             assert_eq!(resp.code, "0");
         }
 
@@ -445,7 +548,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
@@ -454,9 +557,9 @@ mod tests {
             Mock::given(method("POST"))
                 .and(path("/test"))
                 .and(wiremock::matchers::header_exists("Idempotency-Key"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"ok": true})
-                ))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
                 .expect(1)
                 .mount(&server)
                 .await;
@@ -465,9 +568,83 @@ mod tests {
                 .unwrap()
                 .with_base_url(server.uri())
                 .without_idempotency();
-            #[derive(Deserialize)] struct Resp { #[allow(dead_code)] ok: bool }
+            #[derive(Deserialize)]
+            struct Resp {
+                #[allow(dead_code)]
+                ok: bool,
+            }
             let resp: Resp = client.post("/test", &serde_json::json!({})).await.unwrap();
             assert!(resp.ok);
+        }
+
+        #[tokio::test]
+        async fn client_post_uses_caller_supplied_idempotency_key() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/payment"))
+                .and(header("Idempotency-Key", "order-123"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
+                .unwrap()
+                .with_base_url(server.uri())
+                .without_idempotency();
+            let _: serde_json::Value = client
+                .post_with_options(
+                    "/payment",
+                    &serde_json::json!({"Amount": "100"}),
+                    RequestOptions::with_idempotency_key("order-123"),
+                )
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn caller_key_cannot_be_reused_for_different_payload() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/payment"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let dir = tempfile::tempdir().unwrap();
+            let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
+                .unwrap()
+                .with_base_url(server.uri())
+                .with_idempotency_db(dir.path().join("idempotency.db"))
+                .unwrap();
+            let options = || RequestOptions::with_idempotency_key("order-123");
+            let _: serde_json::Value = client
+                .post_with_options("/payment", &serde_json::json!({"Amount": "100"}), options())
+                .await
+                .unwrap();
+            let result: Result<serde_json::Value, _> = client
+                .post_with_options("/payment", &serde_json::json!({"Amount": "200"}), options())
+                .await;
+            assert!(matches!(result, Err(DarajaError::IdempotencyKeyReused)));
         }
 
         #[tokio::test]
@@ -477,16 +654,17 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
 
             Mock::given(method("POST"))
                 .and(path("/dedup"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"ResponseCode": "0"})
-                ))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"ResponseCode": "0"})),
+                )
                 .expect(1)
                 .mount(&server)
                 .await;
@@ -500,7 +678,11 @@ mod tests {
                 .with_idempotency_db(&db_path)
                 .unwrap();
 
-            #[derive(Deserialize)] struct Resp { #[serde(rename = "ResponseCode")] code: String }
+            #[derive(Deserialize)]
+            struct Resp {
+                #[serde(rename = "ResponseCode")]
+                code: String,
+            }
 
             let body = serde_json::json!({"Amount": "100"});
             let first: Resp = client.post("/dedup", &body).await.unwrap();
@@ -516,7 +698,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
@@ -531,7 +713,11 @@ mod tests {
                 .unwrap()
                 .with_base_url(server.uri())
                 .without_idempotency();
-            #[derive(Deserialize)] struct Resp { #[allow(dead_code)] ok: bool }
+            #[derive(Deserialize)]
+            struct Resp {
+                #[allow(dead_code)]
+                ok: bool,
+            }
             let result: Result<Resp, _> = client.post("/fail", &serde_json::json!({})).await;
             assert!(result.is_err());
         }
@@ -544,7 +730,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "old-tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "old-tok", "expires_in": "3599"}),
                 ))
                 .up_to_n_times(1)
                 .mount(&server)
@@ -563,7 +749,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "new-tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "new-tok", "expires_in": "3599"}),
                 ))
                 .up_to_n_times(1)
                 .mount(&server)
@@ -573,9 +759,9 @@ mod tests {
             Mock::given(method("POST"))
                 .and(path("/protected"))
                 .and(header("Authorization", "Bearer new-tok"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"ok": true})
-                ))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
                 .expect(1)
                 .mount(&server)
                 .await;
@@ -584,8 +770,15 @@ mod tests {
                 .unwrap()
                 .with_base_url(server.uri())
                 .without_idempotency();
-            #[derive(Deserialize)] struct Resp { #[allow(dead_code)] ok: bool }
-            let resp: Resp = client.post("/protected", &serde_json::json!({})).await.unwrap();
+            #[derive(Deserialize)]
+            struct Resp {
+                #[allow(dead_code)]
+                ok: bool,
+            }
+            let resp: Resp = client
+                .post("/protected", &serde_json::json!({}))
+                .await
+                .unwrap();
             assert!(resp.ok);
         }
     }

@@ -22,5 +22,5 @@ export async function reverseTransaction(
     QueueTimeOutURL: options.timeoutUrl,
     Remarks: options.remarks ?? "Refund",
     Occasion: options.occasion ?? "",
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }

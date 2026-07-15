@@ -19,7 +19,7 @@ export async function registerUrls(
     ResponseType: options.responseType ?? "Completed",
     ConfirmationURL: options.confirmationUrl,
     ValidationURL: options.validationUrl,
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }
 
 export async function simulateC2b(
@@ -35,5 +35,5 @@ export async function simulateC2b(
     Amount: String(Math.trunc(options.amount)),
     Msisdn: phone,
     BillRefNumber: options.reference ?? "Test",
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }

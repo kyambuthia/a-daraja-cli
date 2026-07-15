@@ -3,7 +3,7 @@
 // Reverse a completed M-Pesa transaction.
 
 use crate::api::common::{initiator_name, initiator_security_credential};
-use crate::client::DarajaClient;
+use crate::client::{DarajaClient, RequestOptions};
 use crate::error::DarajaError;
 use crate::types::ReversalRequest;
 
@@ -24,6 +24,7 @@ pub struct ReversalResponse {
 }
 
 /// Reverse a completed transaction.
+#[allow(clippy::too_many_arguments)]
 pub async fn reverse_transaction(
     client: &DarajaClient,
     transaction_id: &str,
@@ -34,6 +35,63 @@ pub async fn reverse_transaction(
     occasion: &str,
     result_url: &str,
     timeout_url: &str,
+) -> Result<ReversalResponse, DarajaError> {
+    reverse_transaction_with_options(
+        client,
+        transaction_id,
+        amount,
+        receiver_party,
+        receiver_identifier_type,
+        remarks,
+        occasion,
+        result_url,
+        timeout_url,
+        RequestOptions::default(),
+    )
+    .await
+}
+
+/// Reverse a transaction using a stable business-operation idempotency key.
+#[allow(clippy::too_many_arguments)]
+pub async fn reverse_transaction_with_idempotency_key(
+    client: &DarajaClient,
+    transaction_id: &str,
+    amount: u64,
+    receiver_party: &str,
+    receiver_identifier_type: &str,
+    remarks: &str,
+    occasion: &str,
+    result_url: &str,
+    timeout_url: &str,
+    idempotency_key: &str,
+) -> Result<ReversalResponse, DarajaError> {
+    reverse_transaction_with_options(
+        client,
+        transaction_id,
+        amount,
+        receiver_party,
+        receiver_identifier_type,
+        remarks,
+        occasion,
+        result_url,
+        timeout_url,
+        RequestOptions::with_idempotency_key(idempotency_key),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn reverse_transaction_with_options(
+    client: &DarajaClient,
+    transaction_id: &str,
+    amount: u64,
+    receiver_party: &str,
+    receiver_identifier_type: &str,
+    remarks: &str,
+    occasion: &str,
+    result_url: &str,
+    timeout_url: &str,
+    request_options: RequestOptions,
 ) -> Result<ReversalResponse, DarajaError> {
     let request = ReversalRequest {
         initiator: initiator_name(client)?,
@@ -49,7 +107,9 @@ pub async fn reverse_transaction(
         occasion: occasion.into(),
     };
 
-    client.post(REVERSAL_PATH, &request).await
+    client
+        .post_with_options(REVERSAL_PATH, &request, request_options)
+        .await
 }
 
 #[cfg(test)]
@@ -68,7 +128,7 @@ mod tests {
 
     #[cfg(test)]
     mod async_tests {
-        use super::super::{reverse_transaction, REVERSAL_PATH};
+        use super::super::{REVERSAL_PATH, reverse_transaction};
         use crate::client::DarajaClient;
         use crate::config::Credentials;
         use crate::types::Environment;
@@ -89,7 +149,7 @@ mod tests {
 
         fn with_test_certificate() {
             use rand::rngs::OsRng;
-            use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+            use rsa::{RsaPrivateKey, pkcs8::EncodePublicKey};
 
             let dir = tempfile::tempdir().expect("temp dir");
             let mut rng = OsRng;
@@ -114,35 +174,31 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
 
             Mock::given(method("POST"))
                 .and(path(REVERSAL_PATH))
-                .and(wiremock::matchers::body_partial_json(
-                    serde_json::json!({
-                        "Initiator": "apitest",
-                        "CommandID": "TransactionReversal",
-                        "TransactionID": "QEJ78H8JKR",
-                        "Amount": "100",
-                        "ReceiverParty": "600000",
-                        "RecieverIdentifierType": "11",
-                        "ResultURL": "https://example.com/result",
-                        "QueueTimeOutURL": "https://example.com/timeout",
-                        "Remarks": "Wrong amount",
-                        "Occasion": "Refund"
-                    })
-                ))
-                .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({
-                        "OriginatorConversationID": "456-789",
-                        "ConversationID": "AG_20240101_123",
-                        "ResponseCode": "0",
-                        "ResponseDescription": "Success"
-                    })
-                ))
+                .and(wiremock::matchers::body_partial_json(serde_json::json!({
+                    "Initiator": "apitest",
+                    "CommandID": "TransactionReversal",
+                    "TransactionID": "QEJ78H8JKR",
+                    "Amount": "100",
+                    "ReceiverParty": "600000",
+                    "RecieverIdentifierType": "11",
+                    "ResultURL": "https://example.com/result",
+                    "QueueTimeOutURL": "https://example.com/timeout",
+                    "Remarks": "Wrong amount",
+                    "Occasion": "Refund"
+                })))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "OriginatorConversationID": "456-789",
+                    "ConversationID": "AG_20240101_123",
+                    "ResponseCode": "0",
+                    "ResponseDescription": "Success"
+                })))
                 .expect(1)
                 .mount(&server)
                 .await;

@@ -46,6 +46,17 @@ pub enum DarajaError {
     #[error("Idempotency conflict: a payment with this key is already in flight.")]
     IdempotencyConflict,
 
+    #[error("Idempotency key was already used with different request parameters.")]
+    IdempotencyKeyReused,
+
+    #[error(
+        "A previous request with this idempotency key failed; use a new key only after reviewing the failure."
+    )]
+    IdempotencyPreviousFailed,
+
+    #[error("Payment outcome is unknown; reconcile the transaction before retrying.")]
+    IdempotencyOutcomeUnknown,
+
     #[error("Transaction not found: {0}")]
     TransactionNotFound(String),
 
@@ -113,6 +124,9 @@ mod tests {
             DarajaError::InvalidCallbackSignature,
             DarajaError::CallbackVerificationUnavailable,
             DarajaError::IdempotencyConflict,
+            DarajaError::IdempotencyKeyReused,
+            DarajaError::IdempotencyPreviousFailed,
+            DarajaError::IdempotencyOutcomeUnknown,
             DarajaError::TransactionNotFound("test".into()),
             DarajaError::ReversalFailed("test".into()),
             DarajaError::MissingApiKey,
@@ -121,7 +135,7 @@ mod tests {
                 actual: "live".into(),
             },
         ];
-        assert_eq!(errors.len(), 17);
+        assert_eq!(errors.len(), 20);
     }
 
     #[test]

@@ -1,9 +1,11 @@
 import { TokenManager } from "./auth.js";
 import { DarajaError } from "./error.js";
 import {
-  checkIdempotencyCache,
   idempotencyKeyForBody,
   IdempotencyStore,
+  requestFingerprint,
+  scopedIdempotencyKey,
+  validateIdempotencyKey,
 } from "./idempotency.js";
 import type { Credentials, Environment } from "./types.js";
 import { environmentBaseUrl } from "./types.js";
@@ -12,6 +14,10 @@ export interface DarajaClientOptions {
   baseUrlOverride?: string;
   idempotency?: boolean;
   idempotencyStore?: IdempotencyStore;
+}
+
+export interface RequestOptions {
+  idempotencyKey?: string;
 }
 
 export class DarajaClient {
@@ -46,39 +52,96 @@ export class DarajaClient {
     });
   }
 
-  async post<T>(path: string, body: unknown): Promise<T> {
+  async post<T>(
+    path: string,
+    body: unknown,
+    requestOptions: RequestOptions = {}
+  ): Promise<T> {
     const url = `${this.baseUrl()}${path}`;
     const bodyBytes = Buffer.from(JSON.stringify(body));
+    const fingerprint = requestFingerprint(bodyBytes);
+    const callerKey =
+      requestOptions.idempotencyKey ?? idempotencyKeyForBody(bodyBytes);
+    validateIdempotencyKey(callerKey);
+    const scopedKey = scopedIdempotencyKey(
+      this.environment,
+      this.credentials.shortcode,
+      path,
+      callerKey
+    );
 
     if (this.idempotencyStore) {
-      const cached = await checkIdempotencyCache(
-        this.idempotencyStore,
-        bodyBytes
-      );
-      if (cached) {
-        return JSON.parse(cached.toString("utf8")) as T;
+      const result = await this.idempotencyStore.acquire(scopedKey, fingerprint);
+      if (result.kind === "success") {
+        return JSON.parse(result.response.toString("utf8")) as T;
+      }
+      if (result.kind === "pending") {
+        throw new DarajaError(
+          "Idempotency conflict: a payment with this key is already in flight."
+        );
+      }
+      if (result.kind === "fingerprint-mismatch") {
+        throw new DarajaError(
+          "Idempotency key was already used with different request parameters."
+        );
+      }
+      if (result.kind === "failed") {
+        throw new DarajaError(
+          "A previous request with this idempotency key failed; review it before using a new key."
+        );
+      }
+      if (result.kind === "unknown") {
+        throw new DarajaError(
+          "Payment outcome is unknown; reconcile the transaction before retrying."
+        );
       }
     }
 
-    const idempotencyKey = idempotencyKeyForBody(bodyBytes);
-    const response = await this.sendPost(url, bodyBytes, idempotencyKey, false);
-    const text = await response.text();
+    let response: Response;
+    try {
+      response = await this.sendPost(url, bodyBytes, callerKey, false);
+    } catch (error) {
+      if (this.idempotencyStore) {
+        await this.idempotencyStore.saveUnknown(scopedKey);
+      }
+      throw error;
+    }
+
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      if (this.idempotencyStore) {
+        await this.idempotencyStore.saveUnknown(scopedKey);
+      }
+      throw new DarajaError(`Network error: failed to read response: ${error}`);
+    }
 
     if (!response.ok) {
       if (this.idempotencyStore) {
-        await this.idempotencyStore.saveFailed(idempotencyKey);
+        await this.idempotencyStore.saveFailed(scopedKey);
       }
       throw new DarajaError(`Network error: HTTP ${response.status}: ${text}`);
     }
 
+    let parsed: T;
+    try {
+      parsed = JSON.parse(text) as T;
+    } catch (error) {
+      if (this.idempotencyStore) {
+        await this.idempotencyStore.saveUnknown(scopedKey);
+      }
+      throw new DarajaError(`Network error: invalid JSON response: ${error}`);
+    }
+
     if (this.idempotencyStore) {
       await this.idempotencyStore.saveSuccess(
-        idempotencyKey,
+        scopedKey,
         Buffer.from(text, "utf8")
       );
     }
 
-    return JSON.parse(text) as T;
+    return parsed;
   }
 
   private async sendPost(

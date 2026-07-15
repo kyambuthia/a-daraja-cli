@@ -21,5 +21,5 @@ export async function queryStatus(
     QueueTimeOutURL: options.timeoutUrl,
     Remarks: options.remarks ?? "Status check",
     Occasion: options.occasion ?? "",
-  });
+  }, { idempotencyKey: options.idempotencyKey });
 }

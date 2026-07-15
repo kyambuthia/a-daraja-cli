@@ -3,10 +3,12 @@ mod profiles;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daraja_rs::api::balance::query_balance;
-use daraja_rs::api::b2c::b2c_payment;
+use daraja_rs::api::b2c::{b2c_payment, b2c_payment_with_idempotency_key};
 use daraja_rs::api::c2b::{register_urls, simulate_c2b};
-use daraja_rs::api::stk_push::{stk_push_query, stk_push_with_type};
-use daraja_rs::api::reversal::reverse_transaction;
+use daraja_rs::api::stk_push::{
+    stk_push_query, stk_push_with_type, stk_push_with_type_and_idempotency_key,
+};
+use daraja_rs::api::reversal::{reverse_transaction, reverse_transaction_with_idempotency_key};
 use daraja_rs::api::status::query_status;
 
 use daraja_rs::auth::TokenManager;
@@ -83,6 +85,9 @@ enum Commands {
         /// Show the request that would be sent without calling Daraja.
         #[arg(long)]
         dry_run: bool,
+        /// Stable business-operation key for safely repeating this exact request
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
     /// Check if the customer completed a payment prompt
     #[command(name = "prompt-status", visible_aliases = ["stk-query"])]
@@ -168,6 +173,9 @@ enum Commands {
         /// Show the request that would be sent without calling Daraja.
         #[arg(long)]
         dry_run: bool,
+        /// Stable business-operation key for safely repeating this exact request
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
 
     // ── Account operations ──────────────────────────────────────
@@ -229,6 +237,9 @@ enum Commands {
         /// Show the request that would be sent without calling Daraja.
         #[arg(long)]
         dry_run: bool,
+        /// Stable business-operation key for safely repeating this exact request
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
 
     // ── Setup ───────────────────────────────────────────────────
@@ -625,6 +636,7 @@ async fn run() -> Result<(), DarajaError> {
             payment_type,
             yes,
             dry_run,
+            idempotency_key,
         } => {
             cmd_prompt(
                 phone,
@@ -635,6 +647,7 @@ async fn run() -> Result<(), DarajaError> {
                 payment_type,
                 yes,
                 dry_run,
+                idempotency_key,
             )
             .await
         }
@@ -656,8 +669,9 @@ async fn run() -> Result<(), DarajaError> {
             timeout_url,
             yes,
             dry_run,
+            idempotency_key,
         } => {
-            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes, dry_run, cli.json)
+            cmd_send(to, amount, remarks, occasion, payment_type, result_url, timeout_url, yes, dry_run, idempotency_key, cli.json)
                 .await
         }
         Commands::Query {
@@ -681,6 +695,7 @@ async fn run() -> Result<(), DarajaError> {
             result_url,
             timeout_url,
             dry_run,
+            idempotency_key,
         } => {
             let amount = parse_kes_amount(&amount)?;
             cmd_refund(
@@ -693,6 +708,7 @@ async fn run() -> Result<(), DarajaError> {
                 result_url,
                 timeout_url,
                 dry_run,
+                idempotency_key,
             )
             .await
         }
@@ -1464,6 +1480,7 @@ async fn cmd_prompt(
     payment_type: PromptType,
     yes: bool,
     dry_run: bool,
+    idempotency_key: Option<String>,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
     let phone = normalize_phone(&phone);
@@ -1492,6 +1509,10 @@ async fn cmd_prompt(
                 ("Reference", reference.clone()),
                 ("Callback URL", callback.clone()),
                 (
+                    "Idempotency Key",
+                    idempotency_key.clone().unwrap_or_else(|| "auto-derived".into()),
+                ),
+                (
                     "Type",
                     match payment_type {
                         PromptType::Paybill => "paybill".into(),
@@ -1508,16 +1529,17 @@ async fn cmd_prompt(
     confirm_payment(&phone, amount, &description, yes)?;
     println!();
 
-    let resp = stk_push_with_type(
-        daraja.client(),
-        &phone,
-        amount,
-        &description,
-        &reference,
-        &callback,
-        payment_type.to_stk_transaction_type(),
-    )
-    .await?;
+    let transaction_type = payment_type.to_stk_transaction_type();
+    let resp = match idempotency_key.as_deref() {
+        Some(key) => stk_push_with_type_and_idempotency_key(
+            daraja.client(), &phone, amount, &description, &reference, &callback,
+            transaction_type, key,
+        ).await?,
+        None => stk_push_with_type(
+            daraja.client(), &phone, amount, &description, &reference, &callback,
+            transaction_type,
+        ).await?,
+    };
 
     println!("✓ Payment prompt sent");
     println!();
@@ -1627,6 +1649,7 @@ async fn cmd_send(
     timeout_url: String,
     yes: bool,
     dry_run: bool,
+    idempotency_key: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
@@ -1650,6 +1673,10 @@ async fn cmd_send(
                 ),
                 ("Result URL", result_url.clone()),
                 ("Timeout URL", timeout_url.clone()),
+                (
+                    "Idempotency Key",
+                    idempotency_key.clone().unwrap_or_else(|| "auto-derived".into()),
+                ),
             ],
         );
         return Ok(());
@@ -1660,17 +1687,17 @@ async fn cmd_send(
     confirm_payment(&phone, amount, &remarks, yes)?;
     println!();
 
-    let resp = b2c_payment(
-        daraja.client(),
-        &phone,
-        amount,
-        payment_type.to_b2c_command(),
-        &remarks,
-        &occasion,
-        &result_url,
-        &timeout_url,
-    )
-    .await?;
+    let command = payment_type.to_b2c_command();
+    let resp = match idempotency_key.as_deref() {
+        Some(key) => b2c_payment_with_idempotency_key(
+            daraja.client(), &phone, amount, command, &remarks, &occasion,
+            &result_url, &timeout_url, key,
+        ).await?,
+        None => b2c_payment(
+            daraja.client(), &phone, amount, command, &remarks, &occasion,
+            &result_url, &timeout_url,
+        ).await?,
+    };
 
     if json {
         println!(
@@ -1781,6 +1808,7 @@ async fn cmd_refund(
     result_url: String,
     timeout_url: String,
     dry_run: bool,
+    idempotency_key: Option<String>,
 ) -> Result<(), DarajaError> {
     if dry_run {
         print_dry_run(
@@ -1794,6 +1822,10 @@ async fn cmd_refund(
                 ("Occasion", occasion.clone()),
                 ("Result URL", result_url.clone()),
                 ("Timeout URL", timeout_url.clone()),
+                (
+                    "Idempotency Key",
+                    idempotency_key.clone().unwrap_or_else(|| "auto-derived".into()),
+                ),
             ],
         );
         return Ok(());
@@ -1801,18 +1833,16 @@ async fn cmd_refund(
 
     let daraja = load_daraja().await?;
 
-    let resp = reverse_transaction(
-        daraja.client(),
-        &id,
-        amount,
-        &receiver,
-        &receiver_type,
-        &remarks,
-        &occasion,
-        &result_url,
-        &timeout_url,
-    )
-    .await?;
+    let resp = match idempotency_key.as_deref() {
+        Some(key) => reverse_transaction_with_idempotency_key(
+            daraja.client(), &id, amount, &receiver, &receiver_type, &remarks,
+            &occasion, &result_url, &timeout_url, key,
+        ).await?,
+        None => reverse_transaction(
+            daraja.client(), &id, amount, &receiver, &receiver_type, &remarks,
+            &occasion, &result_url, &timeout_url,
+        ).await?,
+    };
 
     println!("✓ Refund initiated");
     println!();

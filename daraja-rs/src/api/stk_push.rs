@@ -2,7 +2,7 @@
 //
 // Pushes a payment prompt to a customer's phone.
 
-use crate::client::DarajaClient;
+use crate::client::{DarajaClient, RequestOptions};
 use crate::error::DarajaError;
 use crate::security::{current_timestamp, generate_password, normalize_phone};
 use crate::types::{StkPushRequest, StkPushResponse, StkTransactionType};
@@ -57,6 +57,55 @@ pub async fn stk_push_with_type(
     callback_url: &str,
     transaction_type: StkTransactionType,
 ) -> Result<StkPushResponse, DarajaError> {
+    stk_push_with_options(
+        client,
+        phone,
+        amount,
+        description,
+        account_reference,
+        callback_url,
+        transaction_type,
+        RequestOptions::default(),
+    )
+    .await
+}
+
+/// Initiate an STK Push using a stable business-operation idempotency key.
+#[allow(clippy::too_many_arguments)]
+pub async fn stk_push_with_type_and_idempotency_key(
+    client: &DarajaClient,
+    phone: &str,
+    amount: u64,
+    description: &str,
+    account_reference: &str,
+    callback_url: &str,
+    transaction_type: StkTransactionType,
+    idempotency_key: &str,
+) -> Result<StkPushResponse, DarajaError> {
+    stk_push_with_options(
+        client,
+        phone,
+        amount,
+        description,
+        account_reference,
+        callback_url,
+        transaction_type,
+        RequestOptions::with_idempotency_key(idempotency_key),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stk_push_with_options(
+    client: &DarajaClient,
+    phone: &str,
+    amount: u64,
+    description: &str,
+    account_reference: &str,
+    callback_url: &str,
+    transaction_type: StkTransactionType,
+    request_options: RequestOptions,
+) -> Result<StkPushResponse, DarajaError> {
     let shortcode = &client.credentials.shortcode;
     let passkey = client.credentials.passkey.as_str();
     let timestamp = current_timestamp();
@@ -78,7 +127,11 @@ pub async fn stk_push_with_type(
     };
 
     client
-        .post("/mpesa/stkpush/v1/processrequest", &request)
+        .post_with_options(
+            "/mpesa/stkpush/v1/processrequest",
+            &request,
+            request_options,
+        )
         .await
 }
 
@@ -104,7 +157,6 @@ pub async fn stk_push_query(
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn stk_push_endpoint_path_is_correct() {
@@ -116,10 +168,7 @@ mod tests {
 
     #[test]
     fn stk_push_query_endpoint_path_is_correct() {
-        assert_eq!(
-            "/mpesa/stkpush/v1/query",
-            "/mpesa/stkpush/v1/query"
-        );
+        assert_eq!("/mpesa/stkpush/v1/query", "/mpesa/stkpush/v1/query");
     }
 
     #[test]
@@ -164,7 +213,9 @@ mod tests {
             Credentials {
                 consumer_key: Zeroizing::new("ck".into()),
                 consumer_secret: Zeroizing::new("cs".into()),
-                passkey: Zeroizing::new("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919".into()),
+                passkey: Zeroizing::new(
+                    "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919".into(),
+                ),
                 shortcode: "174379".into(),
                 initiator_name: Some(Zeroizing::new("apitest".into())),
                 initiator_password: Some(Zeroizing::new("Safaricom999!*!".into())),
@@ -178,34 +229,30 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
 
             Mock::given(method("POST"))
                 .and(path("/mpesa/stkpush/v1/processrequest"))
-                .and(wiremock::matchers::body_partial_json(
-                    serde_json::json!({
-                        "BusinessShortCode": "174379",
-                        "TransactionType": "CustomerPayBillOnline",
-                        "Amount": "100",
-                        "PartyA": "254712345678",
-                        "PartyB": "174379",
-                        "PhoneNumber": "254712345678",
-                        "AccountReference": "Order #123",
-                        "TransactionDesc": "Moringa seedlings"
-                    })
-                ))
-                .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({
-                        "MerchantRequestID": "mr-1",
-                        "CheckoutRequestID": "ws_CO_1",
-                        "ResponseCode": "0",
-                        "ResponseDescription": "Success",
-                        "CustomerMessage": "Success"
-                    })
-                ))
+                .and(wiremock::matchers::body_partial_json(serde_json::json!({
+                    "BusinessShortCode": "174379",
+                    "TransactionType": "CustomerPayBillOnline",
+                    "Amount": "100",
+                    "PartyA": "254712345678",
+                    "PartyB": "174379",
+                    "PhoneNumber": "254712345678",
+                    "AccountReference": "Order #123",
+                    "TransactionDesc": "Moringa seedlings"
+                })))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "MerchantRequestID": "mr-1",
+                    "CheckoutRequestID": "ws_CO_1",
+                    "ResponseCode": "0",
+                    "ResponseDescription": "Success",
+                    "CustomerMessage": "Success"
+                })))
                 .expect(1)
                 .mount(&server)
                 .await;
@@ -221,7 +268,9 @@ mod tests {
                 "Moringa seedlings",
                 "Order #123",
                 "https://example.com/callback",
-            ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
             assert_eq!(resp.response_code, "0");
             assert_eq!(resp.checkout_request_id, "ws_CO_1");
@@ -234,7 +283,7 @@ mod tests {
             Mock::given(method("GET"))
                 .and(path("/oauth/v1/generate"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"access_token": "tok", "expires_in": "3599"})
+                    serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
                 ))
                 .mount(&server)
                 .await;
@@ -249,9 +298,7 @@ mod tests {
                 .unwrap()
                 .with_base_url(server.uri())
                 .without_idempotency();
-            let result = stk_push(
-                &client, "254712345678", 100, "test", "ref", "https://cb",
-            ).await;
+            let result = stk_push(&client, "254712345678", 100, "test", "ref", "https://cb").await;
             assert!(result.is_err());
         }
     }
