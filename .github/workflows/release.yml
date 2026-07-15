@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Verify tag matches every package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          rust_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "daraja-rs") | .version')"
+          cli_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "cli") | .version')"
+          npm_version="$(node -p "require('./daraja-ts/package.json').version")"
+          test "$TAG" = "v${rust_version}"
+          test "$TAG" = "v${cli_version}"
+          test "$TAG" = "v${npm_version}"
+
+      - name: Verify Rust workspace
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo check --workspace --locked
+          cargo test --workspace --locked
+
+      - name: Verify TypeScript workspace
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Build release assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          binary_archive="pesaraja-${TAG}-linux-x86_64.tar.gz"
+          crate_archive="daraja-rs-${version}.crate"
+          mkdir -p release
+
+          cargo build --release --locked -p cli
+          tar -C target/release -czf "release/${binary_archive}" pesaraja
+
+          cargo package -p daraja-rs --locked
+          cp "target/package/${crate_archive}" "release/${crate_archive}"
+          npm pack -w @pesaraja/sdk --pack-destination release
+
+          for asset in release/*; do
+            filename="$(basename "$asset")"
+            (cd release && sha256sum "$filename" > "${filename}.sha256")
+          done
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi

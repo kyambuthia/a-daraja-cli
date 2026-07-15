@@ -30,8 +30,9 @@ pesaraja --help
 
 ## Install With `install.sh`
 
-The installer uses a prebuilt release only when `PESARAJA_VERSION` is set. If
-that artifact is unavailable, it falls back to `cargo install`.
+The installer uses a checksum-verified prebuilt release only when
+`PESARAJA_VERSION` is set. If the artifact or checksum is unavailable, it
+falls back to `cargo install` pinned to that release tag.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kyambuthia/pesaraja/trunk/install.sh | \

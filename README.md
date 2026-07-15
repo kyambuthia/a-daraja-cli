@@ -10,6 +10,7 @@ Current code-backed docs:
 - [Install](docs/install.md)
 - [Setup](docs/setup.md)
 - [Usage](docs/usage.md)
+- [Release process](docs/releasing.md)
 
 Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broken one. This is the money bridge.
 
@@ -41,7 +42,9 @@ cargo build --release -p cli
 cp target/release/pesaraja ~/.local/bin/
 ```
 
-Or use `./install.sh` when a GitHub release is available.
+Or use `./install.sh` with `PESARAJA_VERSION` when a GitHub release is
+available. Prebuilt binaries must pass the release SHA-256 checksum; otherwise
+the installer builds the selected tag from source.
 
 ## Setup
 
