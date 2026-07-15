@@ -5,7 +5,10 @@ import { validateAmount, validatePhone, validateShortcode, validateUrl } from ".
 describe("request validation", () => {
   it("matches the cross-language validation contract", async () => {
     const contract = JSON.parse(
-      await readFile(new URL("../../fixtures/validation-contract.json", import.meta.url), "utf8")
+      await readFile(
+        new URL("../../daraja-rs/fixtures/validation-contract.json", import.meta.url),
+        "utf8"
+      )
     ) as {
       phones: Array<{ input: string; normalized?: string; valid?: boolean }>;
       amounts: Array<{ value: number; valid: boolean }>;

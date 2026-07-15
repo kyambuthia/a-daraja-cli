@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn matches_cross_language_validation_contract() {
         let contract: Contract =
-            serde_json::from_str(include_str!("../../fixtures/validation-contract.json")).unwrap();
+            serde_json::from_str(include_str!("../fixtures/validation-contract.json")).unwrap();
         for case in contract.phones {
             let result = validate_phone(&case.input);
             assert_eq!(

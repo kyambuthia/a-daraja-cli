@@ -1,0 +1,22 @@
+# daraja-rs
+
+Rust primitives for Safaricom Daraja and M-Pesa APIs. This crate is part of
+the [Pesaraja](https://github.com/kyambuthia/pesaraja) monorepo.
+
+The project is alpha software and is not ready for production money movement.
+Callback parsing does not authenticate the callback sender; reconcile payment
+state before fulfilling an order.
+
+```rust
+use daraja_rs::Daraja;
+
+let daraja = Daraja::from_env()?;
+let client = daraja.client();
+```
+
+See the repository [README](https://github.com/kyambuthia/pesaraja#readme),
+[API guide](https://github.com/kyambuthia/pesaraja/blob/trunk/API.md), and
+[usage guide](https://github.com/kyambuthia/pesaraja/blob/trunk/docs/usage.md)
+for supported operations and safety constraints.
+
+Licensed under MIT.
