@@ -10,6 +10,8 @@ Current code-backed docs:
 - [Install](docs/install.md)
 - [Setup](docs/setup.md)
 - [Usage](docs/usage.md)
+- [API reference](API.md)
+- [Architecture](docs/ARCHITECTURE.md)
 - [Release process](docs/releasing.md)
 
 Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broken one. This is the money bridge.

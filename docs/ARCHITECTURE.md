@@ -1,7 +1,8 @@
 # Pesaraja Architecture
 
 This document describes the implementation in this repository. Future product
-ideas belong in `roadmap.md` and must not be treated as shipped guarantees.
+ideas belong in [`roadmap.md`](../roadmap.md) and must not be treated as shipped
+guarantees.
 
 ## Packages
 
@@ -112,5 +113,6 @@ full payment payloads through logs.
 
 Tests use temporary directories, fixtures, generated certificates, and
 `wiremock`/mocked `fetch`. They never require real Daraja credentials or send
-live transactions. `fixtures/validation-contract.json` is consumed by both SDK
-test suites to keep boundary behavior aligned.
+live transactions. The shared
+[validation contract](../daraja-rs/fixtures/validation-contract.json) is
+consumed by both SDK test suites to keep boundary behavior aligned.

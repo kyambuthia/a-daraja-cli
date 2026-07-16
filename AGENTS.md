@@ -7,7 +7,7 @@ Pesaraja is a Rust + TypeScript monorepo for Safaricom Daraja/M-Pesa:
 - `daraja-rs/` — Rust SDK and Daraja API primitives.
 - `cli/` — the `pesaraja` Rust CLI.
 - `daraja-ts/` — the `@pesaraja/sdk` TypeScript SDK.
-- `docs/`, `API.md`, and `ARCHITECTURE.md` — user and design documentation.
+- `docs/` and `API.md` — user, architecture, and protocol documentation.
 
 Read the relevant package code and tests before changing behavior. Design documents describe intent and may be ahead of implementation; code, tests, and current user-facing documentation are the contract.
 
@@ -29,7 +29,10 @@ Do not use real Daraja credentials, production endpoints, or live money-moving o
 - Keep sandbox and production configuration visibly distinct. Production behavior must not silently fall back to sandbox behavior.
 - Do not add telemetry or error output that can reveal credentials, passkeys, tokens, security credentials, or full payment payloads.
 
-Current limitation: `docs/usage.md` states that `verifyCallback` only checks for a body and signature header. Do not treat it as cryptographic callback authentication without an explicit implementation and test change.
+Current limitation: `verifyCallback` and `verify_callback` always fail closed
+because cryptographic callback authentication is not implemented. Do not treat
+callback parsing, matching, or authenticator-header presence as authentication
+without an explicit implementation, test, and documentation change.
 
 ## Repository conventions
 

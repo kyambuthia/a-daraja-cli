@@ -7,12 +7,14 @@ import { parseC2bConfirmation, verifyCallback } from "@pesaraja/sdk";
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
-  const signature = request.headers.get("X-Safaricom-Signature");
 
-  verifyCallback(rawBody, signature);
+  // This intentionally throws until cryptographic callback authentication is
+  // implemented. Do not replace it with a header-presence check.
+  verifyCallback(rawBody, undefined);
   const confirmation = parseC2bConfirmation(JSON.parse(rawBody));
 
-  // TODO: fulfill order using confirmation.BillRefNumber, confirmation.TransID
+  // Reconcile authoritative transaction state and atomically reject replay
+  // before fulfilling an order.
   console.log("C2B payment received", confirmation);
 
   return Response.json({

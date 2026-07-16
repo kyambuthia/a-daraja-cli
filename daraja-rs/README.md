@@ -15,7 +15,8 @@ let client = daraja.client();
 ```
 
 See the repository [README](https://github.com/kyambuthia/pesaraja#readme),
-[API guide](https://github.com/kyambuthia/pesaraja/blob/trunk/API.md), and
+[API guide](https://github.com/kyambuthia/pesaraja/blob/trunk/API.md),
+[architecture](https://github.com/kyambuthia/pesaraja/blob/trunk/docs/ARCHITECTURE.md), and
 [usage guide](https://github.com/kyambuthia/pesaraja/blob/trunk/docs/usage.md)
 for supported operations and safety constraints.
 

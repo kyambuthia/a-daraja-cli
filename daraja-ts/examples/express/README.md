@@ -2,6 +2,11 @@
 
 Minimal server with STK and C2B handlers plus a `/api/mpesa/prompt` helper route.
 
+These routes demonstrate parsing, not callback authentication. The C2B route
+intentionally fails closed because cryptographic verification is not currently
+implemented. Treat STK callbacks as untrusted, reconcile transaction state, and
+atomically reject receipt replay before fulfilling an order.
+
 ```bash
 npm install express @types/express
 # SDK from monorepo: npm install file:../../

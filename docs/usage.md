@@ -6,7 +6,8 @@
 - `--dry-run`: print the request summary without calling Daraja on money-moving commands that support it.
 - `-y`, `--yes`: skip confirmation prompts on supported commands.
 
-Amounts are whole KES. Decimal input is truncated and warns when the decimal portion is non-zero.
+Amounts must be positive whole KES. The CLI accepts an all-zero decimal suffix
+such as `100.00`, but rejects non-zero fractions such as `100.50`.
 
 ## Collect Money With STK Push
 
@@ -210,6 +211,13 @@ For `prompt`, `send`, and `refund`, provide a stable `idempotencyKey` (or
 reversal record. Reusing a key with different parameters is rejected. If the
 SDK reports an unknown outcome, query/reconcile the transaction rather than
 resending it with a new key.
+
+Both SDKs apply a 30-second request deadline by default. Rust also applies a
+10-second connection deadline. OAuth acquisition may retry bounded transient
+failures, and a definitive `401` refreshes authentication once. Money-moving
+requests are not automatically retried after a network failure because the
+request may already have reached Daraja. API errors expose selected status,
+code, and message fields without including the raw response body.
 
 ## Rust SDK
 

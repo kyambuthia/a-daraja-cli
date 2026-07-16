@@ -2,6 +2,11 @@
 
 Copy the routes under `app/api/mpesa/` into your Next.js project.
 
+These routes demonstrate parsing, not callback authentication. The C2B route
+intentionally fails closed because cryptographic verification is not currently
+implemented. Treat STK callbacks as untrusted, reconcile transaction state, and
+atomically reject receipt replay before fulfilling an order.
+
 ## Setup
 
 1. Run `pesaraja init` and add `DARAJA_KEY` to `.env.local`
@@ -22,6 +27,7 @@ await d.prompt({
   amount: 500,
   callbackUrl: `${process.env.APP_URL}/api/mpesa/callback`,
   reference: "order-123",
+  idempotencyKey: "order:order-123:stk",
 });
 ```
 

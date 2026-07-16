@@ -1,7 +1,7 @@
 // Human-readable error types.
 //
 // Every error maps to a sentence. Never a raw status code.
-// See ARCHITECTURE.md for the full error design.
+// See docs/ARCHITECTURE.md for the full error design.
 
 use thiserror::Error;
 

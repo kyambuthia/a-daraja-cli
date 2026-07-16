@@ -25,7 +25,11 @@ app.post(
       const callback = parseStkCallback(req.body);
       if (stkCallbackPaid(callback)) {
         const meta = stkCallbackMetadata(callback);
-        console.log("STK paid", meta.MpesaReceiptNumber, meta.Amount);
+        console.log(
+          "Unverified STK success callback received; reconcile before fulfilment",
+          meta.MpesaReceiptNumber,
+          meta.Amount
+        );
       }
       res.json({ ResultCode: 0, ResultDesc: "Success" });
     } catch (error) {
@@ -41,9 +45,15 @@ app.post(
   (req, res) => {
     try {
       const rawBody = req.body.toString("utf8");
-      verifyCallback(rawBody, req.header("X-Safaricom-Signature"));
+      // This intentionally throws until cryptographic callback authentication
+      // is implemented. Do not replace it with a header-presence check.
+      verifyCallback(rawBody, undefined);
       const confirmation = parseC2bConfirmation(JSON.parse(rawBody));
-      console.log("C2B paid", confirmation.TransID, confirmation.TransAmount);
+      console.log(
+        "Authenticated C2B callback",
+        confirmation.TransID,
+        confirmation.TransAmount
+      );
       res.json({ ResultCode: 0, ResultDesc: "Success" });
     } catch (error) {
       console.error(error);
@@ -60,6 +70,7 @@ app.post("/api/mpesa/prompt", express.json(), async (req, res) => {
       amount: req.body.amount,
       callbackUrl: req.body.callbackUrl,
       reference: req.body.reference,
+      idempotencyKey: req.body.idempotencyKey,
     });
     res.json(result);
   } catch (error) {

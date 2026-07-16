@@ -1,5 +1,58 @@
 # Daraja API Reference
 
+This page records the Daraja protocol shapes implemented by Pesaraja. It is
+not a substitute for the current Safaricom contract for your app and product.
+For SDK and CLI behavior, see the [usage guide](docs/usage.md) and
+[architecture](docs/ARCHITECTURE.md).
+
+## Pesaraja Request Contract
+
+Before sending a request, the Rust and TypeScript SDKs enforce these shared
+boundaries where applicable:
+
+- Amounts must be positive whole KES values.
+- Kenyan mobile numbers must use a supported `01`, `07`, or `254` form and are
+  normalized to `254XXXXXXXXX`.
+- Shortcodes contain 5–9 digits and cannot be mobile numbers.
+- Callback, result, and timeout values must be absolute HTTP(S) URLs; production
+  requires HTTPS and rejects embedded URL credentials.
+- C2B simulation and the CLI callback receiver are sandbox-only.
+
+The default total request deadline is 30 seconds. Rust also uses a 10-second
+connection deadline. OAuth tokens use a 30-second expiry safety window.
+Authentication may be refreshed once after a definitive `401`; money-moving
+requests are not automatically retried after ambiguous network failures.
+
+API errors expose bounded status, code, and message fields selected from known
+Daraja response fields. Raw response bodies are intentionally omitted from
+errors to avoid leaking credentials or complete payment payloads.
+
+### Idempotency
+
+Pesaraja sends an `Idempotency-Key` header and records request state locally.
+Callers should provide a stable business-operation key for STK prompts, B2C
+payments, and reversals. The CLI exposes `--idempotency-key`; TypeScript accepts
+`idempotencyKey`; Rust provides the corresponding
+`*_with_idempotency_key` functions.
+
+Keys are scoped by environment, shortcode, endpoint, and request fingerprint.
+Reusing a key with different parameters is rejected. A network failure can
+leave the operation in an `unknown` state; reconcile it before using a new key.
+The local stores prevent duplicate submission by one installation, but do not
+provide distributed exactly-once processing across multiple hosts.
+
+### Callback handling
+
+Callback bodies are untrusted input. Pesaraja validates their structure and
+domain fields and provides stable replay-deduplication keys. TypeScript can
+also match an STK callback to the expected checkout ID, merchant request ID,
+amount, and receipt.
+
+These checks do not authenticate the sender. Cryptographic callback
+verification is not implemented and `verifyCallback`/`verify_callback` always
+fail closed. Reconcile authoritative transaction state and atomically record a
+receipt or transaction ID before irreversible fulfilment.
+
 ## Base URLs
 
 | Environment | URL |
@@ -24,7 +77,8 @@ Response:
 }
 ```
 
-Tokens expire in 3600 seconds. Reuse until expiry.
+Use the returned `expires_in` value. Pesaraja treats the token as expired 30
+seconds early to avoid starting a request with a nearly expired token.
 
 ---
 
