@@ -1,0 +1,29 @@
+{
+  "c2b_confirmation": {
+    "TransactionType": "Pay Bill",
+    "TransID": "QEJ78H8JKR",
+    "TransTime": "20240101120000",
+    "TransAmount": "500.00",
+    "BusinessShortCode": "174379",
+    "BillRefNumber": "ORDER-123",
+    "MSISDN": "254712345678",
+    "FirstName": "John"
+  },
+  "stk_callback": {
+    "Body": {
+      "stkCallback": {
+        "MerchantRequestID": "mr-1",
+        "CheckoutRequestID": "ws_CO_1",
+        "ResultCode": 0,
+        "ResultDesc": "Success",
+        "CallbackMetadata": {
+          "Item": [
+            { "Name": "Amount", "Value": "500" },
+            { "Name": "MpesaReceiptNumber", "Value": "QAB123" },
+            { "Name": "PhoneNumber", "Value": 254712345678 }
+          ]
+        }
+      }
+    }
+  }
+}

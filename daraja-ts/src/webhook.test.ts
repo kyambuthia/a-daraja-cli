@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   parseC2bConfirmation,
   parseStkCallback,
@@ -57,6 +59,26 @@ describe("webhook", () => {
     expect(stkCallbackDeduplicationKey(callback)).toBe("stk:receipt:QAB123");
   });
 
+  it("normalizes numeric-string callback amounts", () => {
+    const callback = parseStkCallback({
+      ...sample,
+      Body: {
+        stkCallback: {
+          ...sample.Body.stkCallback,
+          CallbackMetadata: {
+            Item: [
+              { Name: "Amount", Value: "500" },
+              { Name: "MpesaReceiptNumber", Value: "QAB123" },
+            ],
+          },
+        },
+      },
+    });
+    expect(
+      matchStkCallback(callback, { checkoutRequestId: "ws_CO_1", amount: 500 }).amount
+    ).toBe(500);
+  });
+
   it("rejects mismatched payment callbacks", () => {
     const callback = parseStkCallback(sample);
     expect(() =>
@@ -81,6 +103,22 @@ describe("webhook", () => {
       MSISDN: "254712345678",
     });
     expect(confirmation.TransID).toBe("QEJ78H8JKR");
+  });
+
+  it("matches the shared callback fixture", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        fileURLToPath(
+          new URL("../../daraja-rs/fixtures/callback-contract.json", import.meta.url)
+        ),
+        "utf8"
+      )
+    ) as { c2b_confirmation: unknown; stk_callback: unknown };
+    expect(parseC2bConfirmation(fixture.c2b_confirmation).BillRefNumber).toBe("ORDER-123");
+    const callback = parseStkCallback(fixture.stk_callback);
+    expect(
+      matchStkCallback(callback, { checkoutRequestId: "ws_CO_1", amount: 500 }).receiptNumber
+    ).toBe("QAB123");
   });
 
   it("fails closed when callback cryptographic verification is unavailable", () => {

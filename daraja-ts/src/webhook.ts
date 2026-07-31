@@ -45,6 +45,15 @@ function parsePositiveDecimal(value: string, context: string): void {
   }
 }
 
+function normalizeCallbackAmount(value: string | number): number | undefined {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  }
+  if (!/^\d+(?:\.0+)?$/.test(value)) return undefined;
+  const amount = Number(value);
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : undefined;
+}
+
 export function parseStkCallback(body: unknown): StkCallback {
   const root = asRecord(body, "Invalid STK callback: expected an object.");
   const envelope = asRecord(root.Body, "Invalid STK callback: missing Body.");
@@ -115,7 +124,8 @@ export function matchStkCallback(
     throw new DarajaError("STK callback does not match the expected merchant request ID.");
   }
   const metadata = stkCallbackMetadata(callback);
-  if (typeof metadata.Amount !== "number" || metadata.Amount !== expected.amount) {
+  const amount = normalizeCallbackAmount(metadata.Amount);
+  if (amount === undefined || amount !== expected.amount) {
     throw new DarajaError("STK callback amount does not match the expected payment amount.");
   }
   if (typeof metadata.MpesaReceiptNumber !== "string" || !metadata.MpesaReceiptNumber.trim()) {
@@ -128,7 +138,7 @@ export function matchStkCallback(
   return {
     checkoutRequestId: callback.CheckoutRequestID,
     merchantRequestId: callback.MerchantRequestID,
-    amount: metadata.Amount,
+    amount,
     receiptNumber: metadata.MpesaReceiptNumber,
     phoneNumber: phoneNumber === undefined ? undefined : validatePhone(String(phoneNumber)),
   };

@@ -4,9 +4,7 @@
 // contract. Parsing and matching callbacks never makes them trusted.
 
 use crate::error::DarajaError;
-use crate::validation::{
-    validate_optional_text, validate_phone, validate_required_text, validate_shortcode,
-};
+use crate::validation::{validate_phone, validate_required_text, validate_shortcode};
 
 /// Application-owned callback authenticator.
 ///
@@ -82,7 +80,7 @@ pub fn validate_c2b_confirmation(body: &[u8]) -> Result<C2bConfirmation, DarajaE
         ));
     }
     validate_shortcode(&confirmation.business_short_code).map_err(callback_validation_error)?;
-    validate_optional_text("bill reference", &confirmation.bill_ref_number, 100)
+    validate_required_text("bill reference", &confirmation.bill_ref_number, 100)
         .map_err(callback_validation_error)?;
     confirmation.msisdn =
         validate_phone(&confirmation.msisdn).map_err(callback_validation_error)?;
@@ -199,7 +197,7 @@ mod tests {
             "TransTime": "20240101120000",
             "TransAmount": "100.00",
             "BusinessShortCode": "174379",
-            "BillRefNumber": "",
+            "BillRefNumber": "Test",
             "MSISDN": "254712345678"
         }"#;
         let conf: C2bConfirmation = serde_json::from_str(json).unwrap();
@@ -265,6 +263,15 @@ mod tests {
         }"#;
         let result = validate_c2b_confirmation(json);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn shared_callback_fixture_matches_rust_contract() {
+        let fixture = include_bytes!("../fixtures/callback-contract.json");
+        let root: serde_json::Value = serde_json::from_slice(fixture).unwrap();
+        let body = serde_json::to_vec(&root["c2b_confirmation"]).unwrap();
+        let confirmation = validate_c2b_confirmation(&body).unwrap();
+        assert_eq!(confirmation.bill_ref_number, "ORDER-123");
     }
 
     #[test]
