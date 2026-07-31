@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DarajaError } from "./error.js";
 import type { Credentials, Environment } from "./types.js";
+import { validateRequiredText, validateShortcode } from "./validation.js";
 
 interface PlainCreds {
   consumer_key: string;
@@ -45,7 +46,10 @@ export function decryptCredentials(
   encrypted: Buffer,
   keyBytes: Buffer
 ): Credentials {
-  if (encrypted.length < 13) {
+  if (keyBytes.length !== 32) {
+    throw new DarajaError("Credential decryption key must be exactly 32 bytes.");
+  }
+  if (encrypted.length < 28) {
     throw new DarajaError("Encrypted credentials data is too short.");
   }
 
@@ -54,11 +58,10 @@ export function decryptCredentials(
   const authTag = ciphertext.subarray(ciphertext.length - 16);
   const data = ciphertext.subarray(0, ciphertext.length - 16);
 
-  const decipher = createDecipheriv("aes-256-gcm", keyBytes, nonce);
-  decipher.setAuthTag(authTag);
-
   let plaintext: Buffer;
   try {
+    const decipher = createDecipheriv("aes-256-gcm", keyBytes, nonce);
+    decipher.setAuthTag(authTag);
     plaintext = Buffer.concat([decipher.update(data), decipher.final()]);
   } catch {
     throw new DarajaError(
@@ -66,7 +69,13 @@ export function decryptCredentials(
     );
   }
 
-  const plain = JSON.parse(plaintext.toString("utf8")) as PlainCreds;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext.toString("utf8"));
+  } catch {
+    throw new DarajaError("Decrypted credentials are not valid JSON.");
+  }
+  const plain = validatePlainCredentials(parsed);
   return {
     consumerKey: plain.consumer_key,
     consumerSecret: plain.consumer_secret,
@@ -75,6 +84,39 @@ export function decryptCredentials(
     initiatorName: plain.initiator_name,
     initiatorPassword: plain.initiator_password,
   };
+}
+
+function validatePlainCredentials(value: unknown): PlainCreds {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DarajaError("Decrypted credentials have an invalid format.");
+  }
+  const plain = value as Partial<PlainCreds>;
+  for (const [label, field] of [
+    ["consumer key", plain.consumer_key],
+    ["consumer secret", plain.consumer_secret],
+    ["passkey", plain.passkey],
+  ] as const) {
+    if (typeof field !== "string") {
+      throw new DarajaError(`Decrypted credentials are missing a valid ${label}.`);
+    }
+    validateRequiredText(label, field, 512);
+  }
+  if (typeof plain.shortcode !== "string") {
+    throw new DarajaError("Decrypted credentials are missing a valid shortcode.");
+  }
+  validateShortcode(plain.shortcode);
+  for (const [label, field] of [
+    ["initiator name", plain.initiator_name],
+    ["initiator password", plain.initiator_password],
+  ] as const) {
+    if (field !== undefined) {
+      if (typeof field !== "string") {
+        throw new DarajaError(`Decrypted credentials have an invalid ${label}.`);
+      }
+      validateRequiredText(label, field, 512);
+    }
+  }
+  return plain as PlainCreds;
 }
 
 export async function loadSdkKey(): Promise<string> {
