@@ -24,7 +24,6 @@ use daraja_rs::validation::{validate_phone, validate_url};
 use daraja_rs::webhook::C2bConfirmation;
 use dialoguer::{Confirm, Input, Password, Select, theme::ColorfulTheme};
 use input::parse_kes_amount;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use zeroize::Zeroizing;
@@ -333,7 +332,10 @@ impl InitOptions {
                     .is_some_and(|value| !value.is_empty()),
                 None => false,
             };
-        self.env.is_some() && self.consumer_key.is_some() && self.shortcode.is_some() && secrets_available
+        self.env.is_some()
+            && self.consumer_key.is_some()
+            && self.shortcode.is_some()
+            && secrets_available
     }
 }
 
@@ -393,38 +395,22 @@ fn save_credentials(credentials: &Credentials, sdk_key: &str) -> Result<(), Dara
         std::fs::create_dir_all(parent)
             .map_err(|e| DarajaError::Config(format!("failed to create config directory: {e}")))?;
     }
-    std::fs::write(&creds_path, encrypted).map_err(|e| {
+    profiles::atomic_write_private(&creds_path, &encrypted).map_err(|e| {
         DarajaError::Config(format!(
             "failed to write credentials to {}: {e}",
             creds_path.display()
         ))
     })?;
-    set_private_permissions(&creds_path)?;
 
     let key_file = key_path()?;
-    std::fs::write(&key_file, sdk_key).map_err(|e| {
+    profiles::atomic_write_private(&key_file, sdk_key.as_bytes()).map_err(|e| {
         DarajaError::Config(format!(
             "failed to write key to {}: {e}",
             key_file.display()
         ))
     })?;
-    let mut perms = std::fs::metadata(&key_file)
-        .map_err(|e| DarajaError::Config(format!("failed to read key file metadata: {e}")))?
-        .permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(&key_file, perms)
-        .map_err(|e| DarajaError::Config(format!("failed to set key file permissions: {e}")))?;
 
     Ok(())
-}
-
-fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
-    let mut perms = std::fs::metadata(path)
-        .map_err(|e| DarajaError::Config(format!("failed to read file metadata: {e}")))?
-        .permissions();
-    perms.set_mode(0o600);
-    std::fs::set_permissions(path, perms)
-        .map_err(|e| DarajaError::Config(format!("failed to set private file permissions: {e}")))
 }
 
 fn personal_profile(env_label: &str, credentials: &Credentials) -> Result<Profile, DarajaError> {
@@ -1380,7 +1366,11 @@ mod tests {
         unsafe { std::env::remove_var("DARAJA_KEY") };
 
         let error = resolve_async_urls(None, None).expect_err("production defaults must fail");
-        assert!(error.to_string().contains("result and timeout URLs are required"));
+        assert!(
+            error
+                .to_string()
+                .contains("result and timeout URLs are required")
+        );
     }
 
     #[test]

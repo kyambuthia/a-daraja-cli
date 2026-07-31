@@ -143,11 +143,7 @@ mod tests {
     struct AcceptingAuthenticator;
 
     impl CallbackAuthenticator for AcceptingAuthenticator {
-        fn verify(
-            &self,
-            body: &[u8],
-            signature_header: Option<&str>,
-        ) -> Result<(), DarajaError> {
+        fn verify(&self, body: &[u8], signature_header: Option<&str>) -> Result<(), DarajaError> {
             if body == b"trusted" && signature_header == Some("valid") {
                 Ok(())
             } else {

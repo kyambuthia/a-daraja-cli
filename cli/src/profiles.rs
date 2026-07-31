@@ -5,7 +5,8 @@ use daraja_rs::error::DarajaError;
 use daraja_rs::types::Environment;
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileType {
@@ -76,13 +77,12 @@ pub fn save_profile(
         std::fs::create_dir_all(parent)
             .map_err(|e| DarajaError::Config(format!("failed to create profile directory: {e}")))?;
     }
-    std::fs::write(&creds_path, encrypted).map_err(|e| {
+    atomic_write_private(&creds_path, &encrypted).map_err(|e| {
         DarajaError::Config(format!(
             "failed to write profile credentials to {}: {e}",
             creds_path.display()
         ))
     })?;
-    set_private_permissions(&creds_path)?;
 
     let mut registry = load_registry().unwrap_or_default();
     registry.profiles.retain(|p| p.name != profile.name);
@@ -111,9 +111,51 @@ pub fn save_registry(registry: &ProfileRegistry) -> Result<(), DarajaError> {
     }
     let text = serde_json::to_string_pretty(registry)
         .map_err(|e| DarajaError::Config(format!("failed to serialize profile registry: {e}")))?;
-    std::fs::write(&path, text)
-        .map_err(|e| DarajaError::Config(format!("failed to write profile registry: {e}")))?;
-    set_private_permissions(&path)
+    atomic_write_private(&path, text.as_bytes())
+        .map_err(|e| DarajaError::Config(format!("failed to write profile registry: {e}")))
+}
+
+/// Replace a private configuration file without exposing a partial write.
+pub fn atomic_write_private(path: &Path, contents: &[u8]) -> Result<(), DarajaError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| DarajaError::Config(format!("failed to create config directory: {e}")))?;
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            DarajaError::Config(format!("invalid configuration path: {}", path.display()))
+        })?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = path.with_file_name(format!(".{file_name}.tmp-{}-{nonce}", std::process::id()));
+
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|e| DarajaError::Config(format!("failed to create temporary file: {e}")))?;
+        use std::io::Write;
+        file.write_all(contents)
+            .map_err(|e| DarajaError::Config(format!("failed to write temporary file: {e}")))?;
+        file.sync_all()
+            .map_err(|e| DarajaError::Config(format!("failed to sync temporary file: {e}")))?;
+        set_private_permissions(&temporary)?;
+        std::fs::rename(&temporary, path).map_err(|e| {
+            DarajaError::Config(format!("failed to replace configuration file: {e}"))
+        })?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
@@ -256,6 +298,32 @@ mod tests {
         assert_eq!(loaded.active_profile, Some("personal".into()));
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].merchant_number, "254743121299");
+    }
+
+    #[test]
+    fn private_configuration_writes_replace_files_atomically() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let home = temp_home();
+        let path = home.path().join(".config/daraja/key");
+
+        atomic_write_private(&path, b"first").expect("write first value");
+        atomic_write_private(&path, b"second").expect("replace value");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read value"),
+            "second"
+        );
+        let temporary_files = std::fs::read_dir(path.parent().expect("parent"))
+            .expect("read config directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".key.tmp-"))
+            .count();
+        assert_eq!(temporary_files, 0);
+        let mode = std::fs::metadata(path)
+            .expect("key metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
