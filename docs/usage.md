@@ -43,7 +43,7 @@ pesaraja prompt \
   --callback-url https://example.com/api/mpesa/callback
 ```
 
-Production requires `--callback-url`. Sandbox falls back to a placeholder callback URL if omitted, but that is only useful for basic request testing.
+Production requires `--callback-url`. Sandbox falls back to a placeholder callback URL if omitted, but that is only useful for basic request testing. All callback URLs are validated even during `--dry-run`.
 
 Check prompt status:
 
@@ -96,6 +96,11 @@ pesaraja send \
   --remarks "Refund" \
   --dry-run
 ```
+
+Production requires both `--result-url` and `--timeout-url`; the CLI never
+silently sends asynchronous results to the example URLs. Sandbox uses the
+example URLs only when those flags are omitted, and validates supplied URLs
+before a dry run is printed.
 
 Send:
 

@@ -20,7 +20,7 @@ use daraja_rs::certs::ensure_sandbox_certificate;
 use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
-use daraja_rs::validation::validate_phone;
+use daraja_rs::validation::{validate_phone, validate_url};
 use daraja_rs::webhook::C2bConfirmation;
 use dialoguer::{Confirm, Input, Password, Select, theme::ColorfulTheme};
 use input::parse_kes_amount;
@@ -168,11 +168,11 @@ enum Commands {
         #[arg(long = "type", visible_alias = "command", value_enum, default_value_t = SendType::Business)]
         payment_type: SendType,
         /// URL that receives the payment result
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
+        #[arg(long)]
+        result_url: Option<String>,
         /// URL notified if the request times out
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
+        #[arg(long)]
+        timeout_url: Option<String>,
         /// Skip the confirmation prompt before sending
         #[arg(short = 'y', long)]
         yes: bool,
@@ -198,20 +198,20 @@ enum Commands {
         #[arg(long, default_value = "")]
         occasion: String,
         /// URL that receives the query result
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
+        #[arg(long)]
+        result_url: Option<String>,
         /// URL notified if the request times out
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
+        #[arg(long)]
+        timeout_url: Option<String>,
     },
     /// Check your M-Pesa account balance
     Balance {
         /// URL that receives the balance result
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
+        #[arg(long)]
+        result_url: Option<String>,
         /// URL notified if the request times out
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
+        #[arg(long)]
+        timeout_url: Option<String>,
     },
     /// Reverse a completed payment
     #[command(name = "refund", visible_alias = "reverse")]
@@ -235,11 +235,11 @@ enum Commands {
         #[arg(long, default_value = "")]
         occasion: String,
         /// URL that receives the refund result
-        #[arg(long, default_value = DEFAULT_RESULT_URL)]
-        result_url: String,
+        #[arg(long)]
+        result_url: Option<String>,
         /// URL notified if the request times out
-        #[arg(long, default_value = DEFAULT_TIMEOUT_URL)]
-        timeout_url: String,
+        #[arg(long)]
+        timeout_url: Option<String>,
         /// Show the request that would be sent without calling Daraja.
         #[arg(long)]
         dry_run: bool,
@@ -491,6 +491,54 @@ fn print_dry_run(title: &str, fields: &[(&str, String)]) {
     println!();
     println!("  No request was sent.");
     println!();
+}
+
+fn configured_environment() -> Result<Environment, DarajaError> {
+    let key = load_sdk_key()?;
+    match sdk_key_environment(&key) {
+        Some(("sandbox", _)) => Ok(Environment::Sandbox),
+        Some(("production", _)) => Ok(Environment::Production),
+        _ => Err(DarajaError::Config(
+            "SDK key must start with dsk_test_ or dsk_live_".into(),
+        )),
+    }
+}
+
+fn resolve_callback_url(callback_url: Option<String>) -> Result<String, DarajaError> {
+    let environment = configured_environment()?;
+    let callback = match callback_url {
+        Some(url) => url,
+        None if environment == Environment::Production => {
+            return Err(DarajaError::Config(
+                "callback URL is required for production — pass --callback-url".into(),
+            ));
+        }
+        None => {
+            println!("  Using sandbox callback URL: {DEFAULT_CALLBACK}");
+            DEFAULT_CALLBACK.to_string()
+        }
+    };
+    validate_url("callback URL", &callback, environment)?;
+    Ok(callback)
+}
+
+fn resolve_async_urls(
+    result_url: Option<String>,
+    timeout_url: Option<String>,
+) -> Result<(String, String), DarajaError> {
+    let environment = configured_environment()?;
+    if environment == Environment::Production && (result_url.is_none() || timeout_url.is_none()) {
+        return Err(DarajaError::Config(
+            "result and timeout URLs are required for production — pass --result-url and --timeout-url"
+                .into(),
+        ));
+    }
+
+    let result = result_url.unwrap_or_else(|| DEFAULT_RESULT_URL.to_string());
+    let timeout = timeout_url.unwrap_or_else(|| DEFAULT_TIMEOUT_URL.to_string());
+    validate_url("result URL", &result, environment)?;
+    validate_url("timeout URL", &timeout, environment)?;
+    Ok((result, timeout))
 }
 
 fn theme() -> ColorfulTheme {
@@ -1310,6 +1358,47 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_async_urls_use_test_defaults_and_validate_them() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let home = temp_home();
+        let config_dir = home.path().join(".config/daraja");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(config_dir.join("key"), generate_sdk_key("test")).expect("write key");
+        unsafe { std::env::remove_var("DARAJA_KEY") };
+
+        let (result, timeout) = resolve_async_urls(None, None).expect("sandbox defaults");
+        assert_eq!(result, DEFAULT_RESULT_URL);
+        assert_eq!(timeout, DEFAULT_TIMEOUT_URL);
+    }
+
+    #[test]
+    fn production_async_urls_require_explicit_values() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let home = temp_home();
+        let config_dir = home.path().join(".config/daraja");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(config_dir.join("key"), generate_sdk_key("live")).expect("write key");
+        unsafe { std::env::remove_var("DARAJA_KEY") };
+
+        let error = resolve_async_urls(None, None).expect_err("production defaults must fail");
+        assert!(error.to_string().contains("result and timeout URLs are required"));
+    }
+
+    #[test]
+    fn callback_urls_are_validated_before_dry_run() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let home = temp_home();
+        let config_dir = home.path().join(".config/daraja");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(config_dir.join("key"), generate_sdk_key("test")).expect("write key");
+        unsafe { std::env::remove_var("DARAJA_KEY") };
+
+        let error = resolve_callback_url(Some("not-a-url".into()))
+            .expect_err("invalid callback URL must fail");
+        assert!(error.to_string().contains("callback URL"));
+    }
+
+    #[test]
     fn init_options_reject_phone_number_shortcodes() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let opts = InitOptions {
@@ -1455,19 +1544,7 @@ async fn cmd_prompt(
     let amount = parse_kes_amount(&amount)?;
     let phone = validate_phone(&phone)?;
 
-    let callback = match callback_url {
-        Some(url) => url,
-        None => {
-            let key = load_sdk_key()?;
-            if key.starts_with("dsk_live_") {
-                return Err(DarajaError::Config(
-                    "callback URL is required for production — pass --callback-url".into(),
-                ));
-            }
-            println!("  Using sandbox callback URL: {DEFAULT_CALLBACK}");
-            DEFAULT_CALLBACK.to_string()
-        }
-    };
+    let callback = resolve_callback_url(callback_url)?;
 
     if dry_run {
         print_dry_run(
@@ -1631,8 +1708,8 @@ async fn cmd_send(
     remarks: String,
     occasion: String,
     payment_type: SendType,
-    result_url: String,
-    timeout_url: String,
+    result_url: Option<String>,
+    timeout_url: Option<String>,
     yes: bool,
     dry_run: bool,
     idempotency_key: Option<String>,
@@ -1640,6 +1717,7 @@ async fn cmd_send(
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
     let phone = validate_phone(&to)?;
+    let (result_url, timeout_url) = resolve_async_urls(result_url, timeout_url)?;
 
     if dry_run {
         print_dry_run(
@@ -1737,10 +1815,11 @@ async fn cmd_query(
     id: String,
     remarks: String,
     occasion: String,
-    result_url: String,
-    timeout_url: String,
+    result_url: Option<String>,
+    timeout_url: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
+    let (result_url, timeout_url) = resolve_async_urls(result_url, timeout_url)?;
     let daraja = load_daraja().await?;
 
     let resp = query_status(
@@ -1781,10 +1860,11 @@ async fn cmd_query(
 }
 
 async fn cmd_balance(
-    result_url: String,
-    timeout_url: String,
+    result_url: Option<String>,
+    timeout_url: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
+    let (result_url, timeout_url) = resolve_async_urls(result_url, timeout_url)?;
     let daraja = load_daraja().await?;
 
     let resp = query_balance(daraja.client(), &result_url, &timeout_url).await?;
@@ -1826,11 +1906,12 @@ async fn cmd_refund(
     receiver_type: String,
     remarks: String,
     occasion: String,
-    result_url: String,
-    timeout_url: String,
+    result_url: Option<String>,
+    timeout_url: Option<String>,
     dry_run: bool,
     idempotency_key: Option<String>,
 ) -> Result<(), DarajaError> {
+    let (result_url, timeout_url) = resolve_async_urls(result_url, timeout_url)?;
     if dry_run {
         print_dry_run(
             "Reversal / refund",
