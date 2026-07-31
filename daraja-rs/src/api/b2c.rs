@@ -12,6 +12,71 @@ use crate::validation::{
 
 const B2C_PAYMENT_PATH: &str = "/mpesa/b2c/v1/paymentrequest";
 
+/// Ergonomic B2C payment request options.
+#[derive(Debug, Clone)]
+pub struct B2cPaymentOptions {
+    pub phone: String,
+    pub amount: u64,
+    pub command: B2cCommand,
+    pub remarks: String,
+    pub occasion: String,
+    pub result_url: String,
+    pub timeout_url: String,
+}
+
+impl B2cPaymentOptions {
+    pub fn new(
+        phone: impl Into<String>,
+        amount: u64,
+        result_url: impl Into<String>,
+        timeout_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            phone: phone.into(),
+            amount,
+            command: B2cCommand::BusinessPayment,
+            remarks: "Payment".into(),
+            occasion: String::new(),
+            result_url: result_url.into(),
+            timeout_url: timeout_url.into(),
+        }
+    }
+
+    pub fn with_command(mut self, command: B2cCommand) -> Self {
+        self.command = command;
+        self
+    }
+
+    pub fn with_remarks(mut self, remarks: impl Into<String>) -> Self {
+        self.remarks = remarks.into();
+        self
+    }
+
+    pub fn with_occasion(mut self, occasion: impl Into<String>) -> Self {
+        self.occasion = occasion.into();
+        self
+    }
+}
+
+/// Send a B2C payment from typed request options.
+pub async fn b2c_payment_with_options(
+    client: &DarajaClient,
+    options: &B2cPaymentOptions,
+) -> Result<B2cResponse, DarajaError> {
+    send_b2c_payment(
+        client,
+        &options.phone,
+        options.amount,
+        options.command,
+        &options.remarks,
+        &options.occasion,
+        &options.result_url,
+        &options.timeout_url,
+        RequestOptions::default(),
+    )
+    .await
+}
+
 /// B2C response from Daraja.
 #[derive(Debug, serde::Deserialize)]
 pub struct B2cResponse {
@@ -37,7 +102,7 @@ pub async fn b2c_payment(
     result_url: &str,
     timeout_url: &str,
 ) -> Result<B2cResponse, DarajaError> {
-    b2c_payment_with_options(
+    send_b2c_payment(
         client,
         phone,
         amount,
@@ -64,7 +129,7 @@ pub async fn b2c_payment_with_idempotency_key(
     timeout_url: &str,
     idempotency_key: &str,
 ) -> Result<B2cResponse, DarajaError> {
-    b2c_payment_with_options(
+    send_b2c_payment(
         client,
         phone,
         amount,
@@ -79,7 +144,7 @@ pub async fn b2c_payment_with_idempotency_key(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn b2c_payment_with_options(
+async fn send_b2c_payment(
     client: &DarajaClient,
     phone: &str,
     amount: u64,
@@ -150,6 +215,22 @@ mod tests {
         assert!(valid.contains(&B2cCommand::BusinessPayment.as_str()));
         assert!(valid.contains(&B2cCommand::SalaryPayment.as_str()));
         assert!(valid.contains(&B2cCommand::PromotionPayment.as_str()));
+    }
+
+    #[test]
+    fn typed_options_support_fluent_payment_configuration() {
+        let options = B2cPaymentOptions::new(
+            "254712345678",
+            100,
+            "https://example.com/result",
+            "https://example.com/timeout",
+        )
+        .with_command(B2cCommand::SalaryPayment)
+        .with_remarks("Payroll")
+        .with_occasion("July");
+        assert_eq!(options.command, B2cCommand::SalaryPayment);
+        assert_eq!(options.remarks, "Payroll");
+        assert_eq!(options.occasion, "July");
     }
 
     fn install_test_certificate() {

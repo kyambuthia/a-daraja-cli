@@ -9,6 +9,63 @@ use crate::types::{StkPushRequest, StkPushResponse, StkTransactionType};
 use crate::validation::{validate_amount, validate_phone, validate_required_text, validate_url};
 use serde::Serialize;
 
+/// Ergonomic STK Push request options.
+#[derive(Debug, Clone)]
+pub struct StkPushOptions {
+    pub phone: String,
+    pub amount: u64,
+    pub description: String,
+    pub account_reference: String,
+    pub callback_url: String,
+    pub transaction_type: StkTransactionType,
+}
+
+impl StkPushOptions {
+    pub fn new(phone: impl Into<String>, amount: u64, callback_url: impl Into<String>) -> Self {
+        Self {
+            phone: phone.into(),
+            amount,
+            description: "Payment".into(),
+            account_reference: "Payment".into(),
+            callback_url: callback_url.into(),
+            transaction_type: StkTransactionType::PayBill,
+        }
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
+    pub fn with_reference(mut self, account_reference: impl Into<String>) -> Self {
+        self.account_reference = account_reference.into();
+        self
+    }
+
+    pub fn with_transaction_type(mut self, transaction_type: StkTransactionType) -> Self {
+        self.transaction_type = transaction_type;
+        self
+    }
+}
+
+/// Initiate an STK Push from typed request options.
+pub async fn stk_push_with_options(
+    client: &DarajaClient,
+    options: &StkPushOptions,
+) -> Result<StkPushResponse, DarajaError> {
+    send_stk_push(
+        client,
+        &options.phone,
+        options.amount,
+        &options.description,
+        &options.account_reference,
+        &options.callback_url,
+        options.transaction_type,
+        RequestOptions::default(),
+    )
+    .await
+}
+
 /// Initiate an STK Push to a customer's phone.
 ///
 /// `phone` may be in `+254...`, `07...`, `011...`, or `254...` format.
@@ -58,7 +115,7 @@ pub async fn stk_push_with_type(
     callback_url: &str,
     transaction_type: StkTransactionType,
 ) -> Result<StkPushResponse, DarajaError> {
-    stk_push_with_options(
+    send_stk_push(
         client,
         phone,
         amount,
@@ -83,7 +140,7 @@ pub async fn stk_push_with_type_and_idempotency_key(
     transaction_type: StkTransactionType,
     idempotency_key: &str,
 ) -> Result<StkPushResponse, DarajaError> {
-    stk_push_with_options(
+    send_stk_push(
         client,
         phone,
         amount,
@@ -97,7 +154,7 @@ pub async fn stk_push_with_type_and_idempotency_key(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn stk_push_with_options(
+async fn send_stk_push(
     client: &DarajaClient,
     phone: &str,
     amount: u64,
@@ -166,6 +223,8 @@ pub async fn stk_push_query(
 
 #[cfg(test)]
 mod tests {
+    use super::StkPushOptions;
+    use crate::types::StkTransactionType;
 
     #[test]
     fn stk_push_endpoint_path_is_correct() {
@@ -199,6 +258,17 @@ mod tests {
     #[test]
     fn amount_is_formatted_as_integer_string() {
         assert_eq!(100u64.to_string(), "100");
+    }
+
+    #[test]
+    fn typed_options_provide_safe_defaults() {
+        let options = StkPushOptions::new("254712345678", 100, "https://example.com/callback")
+            .with_reference("ORDER-123")
+            .with_description("Order payment")
+            .with_transaction_type(StkTransactionType::Till);
+        assert_eq!(options.account_reference, "ORDER-123");
+        assert_eq!(options.description, "Order payment");
+        assert_eq!(options.transaction_type, StkTransactionType::Till);
     }
 
     #[test]

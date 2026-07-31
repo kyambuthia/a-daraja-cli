@@ -240,6 +240,17 @@ let client = daraja.client();
 
 The Rust SDK currently exposes lower-level API functions through `daraja_rs::api::*`. `Daraja::from_env()` requires `DARAJA_KEY`; `Daraja::from_key(...)` decrypts `~/.config/daraja/credentials.enc`.
 
+Typed options are available for common requests to avoid long positional
+argument lists:
+
+```rust
+use daraja_rs::api::stk_push::{stk_push_with_options, StkPushOptions};
+
+let options = StkPushOptions::new("254712345678", 500, "https://example.com/callback")
+    .with_reference("ORDER-123");
+let response = stk_push_with_options(daraja.client(), &options).await?;
+```
+
 ## Troubleshooting
 
 Run:

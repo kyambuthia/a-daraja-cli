@@ -193,6 +193,7 @@ impl StkTransactionType {
 }
 
 /// B2C CommandID values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum B2cCommand {
     BusinessPayment,
     SalaryPayment,
