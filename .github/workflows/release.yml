@@ -13,7 +13,59 @@ permissions:
   contents: write
 
 jobs:
+  cli-assets:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            os: linux
+            arch: x86_64
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            os: linux
+            arch: aarch64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            os: darwin
+            arch: x86_64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os: darwin
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux ARM64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu
+      - name: Build CLI archive
+        env:
+          TARGET: ${{ matrix.target }}
+          OS: ${{ matrix.os }}
+          ARCH: ${{ matrix.arch }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="pesaraja-${TAG}-${OS}-${ARCH}.tar.gz"
+          mkdir -p release
+          if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          cargo build --release --locked -p cli --target "$TARGET"
+          tar -C "target/${TARGET}/release" -czf "release/${archive}" pesaraja
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/*
+
   release:
+    needs: cli-assets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -54,17 +106,21 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           version="${TAG#v}"
-          binary_archive="pesaraja-${TAG}-linux-x86_64.tar.gz"
           crate_archive="daraja-rs-${version}.crate"
           mkdir -p release
-
-          cargo build --release --locked -p cli
-          tar -C target/release -czf "release/${binary_archive}" pesaraja
 
           cargo package -p daraja-rs --locked
           cp "target/package/${crate_archive}" "release/${crate_archive}"
           npm pack -w @pesaraja/sdk --pack-destination release
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: release
+          merge-multiple: true
+
+      - name: Create checksums
+        run: |
           for asset in release/*; do
             filename="$(basename "$asset")"
             (cd release && sha256sum "$filename" > "${filename}.sha256")

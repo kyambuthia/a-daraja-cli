@@ -25,12 +25,13 @@ the Rust and TypeScript checks, then creates or updates a GitHub release with:
 - an `@pesaraja/sdk` npm package archive; and
 - a SHA-256 checksum beside every artifact.
 
-The workflow does not publish to crates.io or npm. Registry publishing should
+The workflow builds CLI archives for Linux x86-64, Linux ARM64, macOS x86-64,
+and macOS ARM64. The workflow does not publish to crates.io or npm. Registry publishing should
 remain a separate, explicitly authorized step with trusted publishing or
 short-lived credentials configured for the repository.
 
-Platforms without a prebuilt CLI artifact use the installer's source-build
-fallback pinned to the selected release tag.
+Other platforms use the installer's source-build fallback pinned to the selected
+release tag.
 
 ## Verification
 

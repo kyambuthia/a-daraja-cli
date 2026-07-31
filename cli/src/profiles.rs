@@ -4,6 +4,7 @@ use daraja_rs::config::{
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::Environment;
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -173,6 +174,7 @@ pub fn atomic_write_private(path: &Path, contents: &[u8]) -> Result<(), DarajaEr
     result
 }
 
+#[cfg(unix)]
 fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
     let mut perms = std::fs::metadata(path)
         .map_err(|e| DarajaError::Config(format!("failed to read file metadata: {e}")))?
@@ -180,6 +182,11 @@ fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
     perms.set_mode(0o600);
     std::fs::set_permissions(path, perms)
         .map_err(|e| DarajaError::Config(format!("failed to set private file permissions: {e}")))
+}
+
+#[cfg(not(unix))]
+fn set_private_permissions(_path: &std::path::Path) -> Result<(), DarajaError> {
+    Ok(())
 }
 
 pub fn legacy_registry() -> Result<ProfileRegistry, DarajaError> {
