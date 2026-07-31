@@ -118,12 +118,19 @@ pesaraja --json doctor
 
 ## Current Profile Model
 
-The CLI creates and uses an active `personal` profile. Profile metadata appears in `pesaraja config`.
+The CLI creates and uses an active `personal` profile. Add merchant profiles
+without replacing it:
 
-Not implemented yet:
+```bash
+pesaraja setup paybill --name shop
+pesaraja setup till --name kiosk
+pesaraja setup pochi --name wallet
+pesaraja use shop
+pesaraja --profile kiosk balance --result-url https://example.com/result --timeout-url https://example.com/timeout
+```
 
-- `pesaraja setup paybill|till|pochi`
-- `pesaraja use <profile>`
-- `--profile <name>` on action commands
+`--profile` selects a profile for one invocation. `pesaraja use` changes the
+persistent active profile. Profile metadata appears in `pesaraja config`.
 
-Until those are implemented, rerun `pesaraja init` to update or overwrite the active credentials.
+Setup uses the current SDK key's environment. Initialize the requested
+environment first if a merchant profile needs a different environment.

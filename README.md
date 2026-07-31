@@ -103,6 +103,8 @@ npm install file:./daraja-ts
 | Command | What it does |
 |---------|-------------|
 | `pesaraja init` | Interactive setup wizard |
+| `pesaraja setup <type>` | Add a paybill, till, or pochi profile |
+| `pesaraja use <profile>` | Select the active profile |
 | `pesaraja prompt` | STK Push (alias: `stk`) |
 | `pesaraja prompt-status` | Check STK result |
 | `pesaraja receive` | Local C2B callback server (sandbox) |

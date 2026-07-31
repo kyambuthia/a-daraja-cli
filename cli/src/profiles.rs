@@ -62,7 +62,22 @@ pub fn legacy_sdk_key_path() -> Result<PathBuf, DarajaError> {
 }
 
 pub fn profile_credentials_path(name: &str) -> Result<PathBuf, DarajaError> {
+    validate_profile_name(name)?;
     Ok(config_dir()?.join("profiles").join(format!("{name}.enc")))
+}
+
+pub fn validate_profile_name(name: &str) -> Result<(), DarajaError> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(DarajaError::Config(
+            "profile name must be 1-64 ASCII letters, numbers, '.', '_' or '-'".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn save_profile(
@@ -202,11 +217,25 @@ pub fn legacy_registry() -> Result<ProfileRegistry, DarajaError> {
 }
 
 pub fn active_profile(registry: &ProfileRegistry) -> Option<&Profile> {
-    let name = registry.active_profile.as_deref()?;
+    let name = std::env::var("PESARAJA_PROFILE")
+        .ok()
+        .or_else(|| registry.active_profile.clone())?;
     registry
         .profiles
         .iter()
         .find(|profile| profile.name == name)
+}
+
+pub fn select_profile(name: &str) -> Result<(), DarajaError> {
+    validate_profile_name(name)?;
+    let mut registry = load_registry()?;
+    if !registry.profiles.iter().any(|profile| profile.name == name) {
+        return Err(DarajaError::Config(format!(
+            "profile '{name}' was not found"
+        )));
+    }
+    registry.active_profile = Some(name.to_string());
+    save_registry(&registry)
 }
 
 pub fn profile_summary(profile: &Profile) -> serde_json::Value {
@@ -270,6 +299,17 @@ mod tests {
     }
 
     #[test]
+    fn profile_names_reject_path_traversal() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        for name in ["../other", "profile/name", ""] {
+            assert!(validate_profile_name(name).is_err(), "accepted {name}");
+        }
+        let too_long = "a".repeat(65);
+        assert!(validate_profile_name(&too_long).is_err());
+        validate_profile_name("merchant-prod_1").expect("valid profile name");
+    }
+
+    #[test]
     fn empty_registry_is_default_when_no_legacy_files_exist() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let _home = temp_home();
@@ -298,6 +338,37 @@ mod tests {
         assert_eq!(loaded.active_profile, Some("personal".into()));
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].merchant_number, "254743121299");
+    }
+
+    #[test]
+    fn select_profile_updates_active_profile() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let _home = temp_home();
+        let registry = ProfileRegistry {
+            active_profile: Some("personal".into()),
+            profiles: vec![
+                Profile {
+                    name: "personal".into(),
+                    profile_type: ProfileType::Personal,
+                    environment: Environment::Sandbox,
+                    merchant_number: "174379".into(),
+                    credentials_path: "/tmp/personal.enc".into(),
+                    initiator_configured: false,
+                },
+                Profile {
+                    name: "shop".into(),
+                    profile_type: ProfileType::Till,
+                    environment: Environment::Sandbox,
+                    merchant_number: "123456".into(),
+                    credentials_path: "/tmp/shop.enc".into(),
+                    initiator_configured: false,
+                },
+            ],
+        };
+        save_registry(&registry).expect("save registry");
+        select_profile("shop").expect("select profile");
+        let loaded = load_registry().expect("load registry");
+        assert_eq!(loaded.active_profile.as_deref(), Some("shop"));
     }
 
     #[test]

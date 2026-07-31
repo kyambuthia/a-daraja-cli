@@ -30,7 +30,7 @@ use zeroize::Zeroizing;
 
 use profiles::{
     Profile, ProfileType, active_profile, load_active_profile_context, load_registry,
-    profile_credentials_path, profile_summary, save_profile,
+    profile_credentials_path, profile_summary, save_profile, select_profile, validate_profile_name,
 };
 
 #[cfg(test)]
@@ -56,12 +56,45 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Use a named profile for this invocation instead of the active profile.
+    #[arg(long, global = true)]
+    profile: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Configure a named merchant profile without replacing personal credentials.
+    Setup {
+        /// Profile type: paybill, till, or pochi.
+        #[arg(value_enum)]
+        profile_type: SetupProfileType,
+        /// Profile name (prompted when omitted).
+        #[arg(long)]
+        name: Option<String>,
+        /// Environment (defaults to the current SDK key environment).
+        #[arg(long, value_enum)]
+        env: Option<InitEnvironment>,
+        /// Consumer key for non-interactive setup.
+        #[arg(long)]
+        consumer_key: Option<String>,
+        /// Merchant shortcode for non-interactive setup.
+        #[arg(long)]
+        shortcode: Option<String>,
+        /// Initiator name for send / query / balance / refund.
+        #[arg(long)]
+        initiator_name: Option<String>,
+        /// Error if required flags and secret environment variables are missing.
+        #[arg(long)]
+        non_interactive: bool,
+    },
+    /// Make a saved profile active.
+    Use {
+        /// Profile name to activate.
+        name: String,
+    },
     // ── Collect money from a customer ───────────────────────────
     /// Send M-Pesa PIN prompt to customer's phone
     #[command(name = "prompt", visible_alias = "stk")]
@@ -278,6 +311,31 @@ enum Commands {
 enum InitEnvironment {
     Sandbox,
     Production,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SetupProfileType {
+    Paybill,
+    Till,
+    Pochi,
+}
+
+impl SetupProfileType {
+    fn to_profile_type(self) -> ProfileType {
+        match self {
+            Self::Paybill => ProfileType::Paybill,
+            Self::Till => ProfileType::Till,
+            Self::Pochi => ProfileType::Pochi,
+        }
+    }
+
+    fn account_label(self) -> &'static str {
+        match self {
+            Self::Paybill => "PayBill shortcode",
+            Self::Till => "Till number",
+            Self::Pochi => "Pochi merchant number",
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -590,8 +648,34 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), DarajaError> {
     let cli = Cli::parse();
+    let json = cli.json;
+    if let Some(profile) = cli.profile.as_deref() {
+        validate_profile_name(profile)?;
+        unsafe { std::env::set_var("PESARAJA_PROFILE", profile) };
+    }
 
     match cli.command {
+        Commands::Setup {
+            profile_type,
+            name,
+            env,
+            consumer_key,
+            shortcode,
+            initiator_name,
+            non_interactive,
+        } => {
+            cmd_setup(
+                profile_type,
+                name,
+                env,
+                consumer_key,
+                shortcode,
+                initiator_name,
+                non_interactive,
+            )
+            .await
+        }
+        Commands::Use { name } => cmd_use(name),
         Commands::Init {
             env,
             consumer_key,
@@ -608,7 +692,7 @@ async fn run() -> Result<(), DarajaError> {
             })
             .await
         }
-        Commands::Config => cmd_config(cli.json).await,
+        Commands::Config => cmd_config(json).await,
         Commands::ExportKey => cmd_export_key().await,
         Commands::Prompt {
             phone,
@@ -634,14 +718,14 @@ async fn run() -> Result<(), DarajaError> {
             )
             .await
         }
-        Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id, cli.json).await,
+        Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id, json).await,
         Commands::Receive { port } => receive::run(port).await,
         Commands::Simulate {
             phone,
             amount,
             reference,
             shortcode,
-        } => cmd_simulate(phone, amount, reference, shortcode, cli.json).await,
+        } => cmd_simulate(phone, amount, reference, shortcode, json).await,
         Commands::Send {
             to,
             amount,
@@ -665,7 +749,7 @@ async fn run() -> Result<(), DarajaError> {
                 yes,
                 dry_run,
                 idempotency_key,
-                cli.json,
+                json,
             )
             .await
         }
@@ -675,11 +759,11 @@ async fn run() -> Result<(), DarajaError> {
             occasion,
             result_url,
             timeout_url,
-        } => cmd_query(id, remarks, occasion, result_url, timeout_url, cli.json).await,
+        } => cmd_query(id, remarks, occasion, result_url, timeout_url, json).await,
         Commands::Balance {
             result_url,
             timeout_url,
-        } => cmd_balance(result_url, timeout_url, cli.json).await,
+        } => cmd_balance(result_url, timeout_url, json).await,
         Commands::Refund {
             id,
             amount,
@@ -712,18 +796,9 @@ async fn run() -> Result<(), DarajaError> {
             response_type,
             confirm_url,
             validation_url,
-        } => {
-            cmd_register(
-                shortcode,
-                response_type,
-                confirm_url,
-                validation_url,
-                cli.json,
-            )
-            .await
-        }
-        Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint, cli.json).await,
-        Commands::Doctor => cmd_doctor(cli.json).await,
+        } => cmd_register(shortcode, response_type, confirm_url, validation_url, json).await,
+        Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint, json).await,
+        Commands::Doctor => cmd_doctor(json).await,
     }
 }
 
@@ -1105,6 +1180,105 @@ async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn cmd_setup(
+    profile_type: SetupProfileType,
+    name: Option<String>,
+    env: Option<InitEnvironment>,
+    consumer_key: Option<String>,
+    shortcode: Option<String>,
+    initiator_name: Option<String>,
+    non_interactive: bool,
+) -> Result<(), DarajaError> {
+    let sdk_key = load_sdk_key()?;
+    let current_env = sdk_key_environment(&sdk_key)
+        .map(|(environment, _)| environment)
+        .ok_or_else(|| DarajaError::Config("SDK key has an unknown environment prefix".into()))?;
+    let env_label = env.map(init_environment_label).unwrap_or(current_env);
+    if env_label != current_env {
+        return Err(DarajaError::Config(format!(
+            "profile environment '{env_label}' does not match the active SDK key environment '{current_env}'; initialize that environment first"
+        )));
+    }
+
+    let name = match name {
+        Some(name) => name,
+        None => Input::with_theme(&theme())
+            .with_prompt("Profile name")
+            .default(profile_type.to_profile_type().as_str().to_string())
+            .interact_text()
+            .map_err(|e| DarajaError::Config(format!("prompt cancelled: {e}")))?,
+    };
+    validate_profile_name(&name)?;
+    if name == "personal" {
+        return Err(DarajaError::Config(
+            "merchant setup cannot replace the personal profile; choose another --name".into(),
+        ));
+    }
+
+    let options = InitOptions {
+        env: Some(if env_label == "sandbox" {
+            InitEnvironment::Sandbox
+        } else {
+            InitEnvironment::Production
+        }),
+        consumer_key,
+        shortcode,
+        initiator_name,
+        non_interactive,
+    };
+    let credentials = if options.has_all_required() {
+        credentials_from_init_options(&options)?
+    } else if non_interactive {
+        return Err(DarajaError::Config(
+            "non-interactive setup requires --consumer-key, --shortcode, DARAJA_CONSUMER_SECRET, and DARAJA_PASSKEY for production"
+                .into(),
+        ));
+    } else {
+        prompt_credentials_interactive(env_label, profile_type.account_label(), None)?
+    };
+    let environment = if env_label == "sandbox" {
+        Environment::Sandbox
+    } else {
+        Environment::Production
+    };
+    validate_credentials_for_environment(environment, &credentials)?;
+    let profile = Profile {
+        name: name.clone(),
+        profile_type: profile_type.to_profile_type(),
+        environment,
+        merchant_number: credentials.shortcode.clone(),
+        credentials_path: profile_credentials_path(&name)?.display().to_string(),
+        initiator_configured: credentials.initiator_name.is_some()
+            && credentials.initiator_password.is_some(),
+    };
+    save_profile(&profile, &credentials, &sdk_key)?;
+
+    println!("✓ Profile '{name}' configured and activated");
+    println!("  Type: {}", profile.profile_type.as_str());
+    println!("  Environment: {env_label}");
+    println!("  Merchant number: {}", profile.merchant_number);
+    Ok(())
+}
+
+fn cmd_use(name: String) -> Result<(), DarajaError> {
+    select_profile(&name)?;
+    let registry = load_registry()?;
+    let profile = active_profile(&registry)
+        .ok_or_else(|| DarajaError::Config(format!("profile '{name}' was not found")))?;
+    println!("✓ Active profile: {}", profile.name);
+    println!("  Type: {}", profile.profile_type.as_str());
+    println!(
+        "  Environment: {}",
+        match profile.environment {
+            Environment::Sandbox => "sandbox",
+            Environment::Production => "production",
+        }
+    );
+    println!("  Merchant number: {}", profile.merchant_number);
+    Ok(())
+}
+
 async fn cmd_config(json: bool) -> Result<(), DarajaError> {
     let creds_path = credentials_path()?;
     let key = load_sdk_key()?;
@@ -1112,9 +1286,10 @@ async fn cmd_config(json: bool) -> Result<(), DarajaError> {
     let registry = load_registry().unwrap_or_default();
 
     if !registry.profiles.is_empty() {
+        let selected_profile = active_profile(&registry).map(|profile| profile.name.clone());
         if json {
             let output = serde_json::json!({
-                "active_profile": registry.active_profile,
+                "active_profile": selected_profile,
                 "profiles": registry.profiles.iter().map(profile_summary).collect::<Vec<_>>(),
                 "sdk_key_source": key_source_label(),
             });
@@ -1139,7 +1314,8 @@ async fn cmd_config(json: bool) -> Result<(), DarajaError> {
             let active = registry
                 .active_profile
                 .as_deref()
-                .is_some_and(|name| name == profile.name);
+                .is_some_and(|name| name == profile.name)
+                || selected_profile.as_deref() == Some(profile.name.as_str());
             let marker = if active { "[active]" } else { "" };
             println!(
                 "  - {} {} {} {} {}",
