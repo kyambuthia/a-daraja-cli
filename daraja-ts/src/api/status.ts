@@ -16,7 +16,7 @@ export async function queryStatus(
   validateUrl("Timeout URL", options.timeoutUrl, client.environment);
   const securityCredential = await initiatorSecurityCredential(client);
 
-  return client.post<ConversationResponse>(TRANSACTION_STATUS_PATH, {
+  return client.postWithoutIdempotency<ConversationResponse>(TRANSACTION_STATUS_PATH, {
     Initiator: initiatorName(client),
     SecurityCredential: securityCredential,
     CommandID: "TransactionStatusQuery",
@@ -27,5 +27,5 @@ export async function queryStatus(
     QueueTimeOutURL: options.timeoutUrl,
     Remarks: options.remarks ?? "Status check",
     Occasion: options.occasion ?? "",
-  }, { idempotencyKey: options.idempotencyKey });
+  });
 }

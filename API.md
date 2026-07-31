@@ -22,6 +22,8 @@ The default total request deadline is 30 seconds. Rust also uses a 10-second
 connection deadline. OAuth tokens use a 30-second expiry safety window.
 Authentication may be refreshed once after a definitive `401`; money-moving
 requests are not automatically retried after ambiguous network failures.
+Status, balance, and STK query requests are sent without local idempotency
+caching because Daraja uses POST for queries whose results can change.
 
 API errors expose bounded status, code, and message fields selected from known
 Daraja response fields. Raw response bodies are intentionally omitted from

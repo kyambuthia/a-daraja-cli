@@ -187,7 +187,10 @@ impl DarajaClient {
             });
         }
 
-        let response = match self.send_post(&url, &body_bytes, &caller_key, false).await {
+        let response = match self
+            .send_post(&url, &body_bytes, Some(&caller_key), false)
+            .await
+        {
             Ok(response) => response,
             Err(error) => {
                 self.save_idempotency_unknown(&scoped_key);
@@ -217,6 +220,22 @@ impl DarajaClient {
             let body = String::from_utf8_lossy(&response_bytes);
             Err(api_error(status, &body))
         }
+    }
+
+    /// Send a POST request without local idempotency caching.
+    ///
+    /// Daraja uses POST for status and balance queries as well as mutations.
+    /// Use this method for requests whose response must be freshly evaluated.
+    pub async fn post_without_idempotency<T: serde::Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<R, DarajaError> {
+        let url = format!("{}{}", self.base_url(), path);
+        let body_bytes = serde_json::to_vec(body)
+            .map_err(|e| DarajaError::Network(format!("serialize failed: {}", e)))?;
+        let response = self.send_post(&url, &body_bytes, None, false).await?;
+        Self::handle_response(response).await
     }
 
     fn check_idempotency_cache(
@@ -273,7 +292,7 @@ impl DarajaClient {
         &self,
         url: &str,
         body: &[u8],
-        idempotency_key: &str,
+        idempotency_key: Option<&str>,
         is_retry: bool,
     ) -> Result<reqwest::Response, DarajaError> {
         let token = {
@@ -281,12 +300,15 @@ impl DarajaClient {
             tm.get_token().await?
         };
 
-        let response = self
+        let mut request = self
             .inner
             .post(url)
             .header("Authorization", format!("Bearer {}", token.access_token))
-            .header("Content-Type", "application/json")
-            .header("Idempotency-Key", idempotency_key)
+            .header("Content-Type", "application/json");
+        if let Some(idempotency_key) = idempotency_key {
+            request = request.header("Idempotency-Key", idempotency_key);
+        }
+        let response = request
             .body(body.to_vec())
             .send()
             .await

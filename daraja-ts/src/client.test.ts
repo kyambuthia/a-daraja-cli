@@ -47,6 +47,24 @@ describe("DarajaClient idempotency", () => {
     expect(request.headers).toMatchObject({ "Idempotency-Key": "order-123" });
   });
 
+  it("does not attach or cache idempotency for query POSTs", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: "token", expires_in: "3599" }))
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: 1 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DarajaClient(credentials, "sandbox", {
+      baseUrlOverride: "https://daraja.invalid",
+      idempotency: false,
+    });
+
+    await expect(client.postWithoutIdempotency("/query", {})).resolves.toEqual({ value: 1 });
+    const request = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(request.headers).not.toHaveProperty("Idempotency-Key");
+  });
+
   it("rejects the same key with different request parameters", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "daraja-client-"));
     const store = new IdempotencyStore(join(tempDir, "idempotency.json"));

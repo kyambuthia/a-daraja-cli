@@ -159,7 +159,9 @@ pub async fn stk_push_query(
         checkout_request_id: checkout_request_id.into(),
     };
 
-    client.post("/mpesa/stkpush/v1/query", &request).await
+    client
+        .post_without_idempotency("/mpesa/stkpush/v1/query", &request)
+        .await
 }
 
 #[cfg(test)]

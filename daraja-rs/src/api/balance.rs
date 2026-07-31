@@ -43,7 +43,9 @@ pub async fn query_balance(
         result_url: result_url.into(),
     };
 
-    client.post(ACCOUNT_BALANCE_PATH, &request).await
+    client
+        .post_without_idempotency(ACCOUNT_BALANCE_PATH, &request)
+        .await
 }
 
 #[cfg(test)]

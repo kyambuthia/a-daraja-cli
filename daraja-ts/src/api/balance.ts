@@ -13,7 +13,7 @@ export async function queryBalance(
   validateUrl("Timeout URL", options.timeoutUrl, client.environment);
   const securityCredential = await initiatorSecurityCredential(client);
 
-  return client.post<ConversationResponse>(ACCOUNT_BALANCE_PATH, {
+  return client.postWithoutIdempotency<ConversationResponse>(ACCOUNT_BALANCE_PATH, {
     Initiator: initiatorName(client),
     SecurityCredential: securityCredential,
     CommandID: "AccountBalance",
@@ -22,5 +22,5 @@ export async function queryBalance(
     Remarks: "Balance check",
     QueueTimeOutURL: options.timeoutUrl,
     ResultURL: options.resultUrl,
-  }, { idempotencyKey: options.idempotencyKey });
+  });
 }

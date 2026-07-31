@@ -53,7 +53,7 @@ export interface SendOptions extends IdempotentOptions {
   type?: B2cCommand;
 }
 
-export interface QueryOptions extends IdempotentOptions {
+export interface QueryOptions {
   transactionId: string;
   resultUrl: string;
   timeoutUrl: string;
@@ -61,7 +61,7 @@ export interface QueryOptions extends IdempotentOptions {
   occasion?: string;
 }
 
-export interface BalanceOptions extends IdempotentOptions {
+export interface BalanceOptions {
   resultUrl: string;
   timeoutUrl: string;
 }

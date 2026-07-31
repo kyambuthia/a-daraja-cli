@@ -30,6 +30,9 @@ OAuth acquisition may retry bounded transient failures. Money-moving POSTs are
 not automatically retried after network failures because Daraja may already
 have received the request.
 
+Status, balance, and STK query POSTs bypass local idempotency caching and the
+`Idempotency-Key` header so repeated queries receive fresh results.
+
 ## Idempotency
 
 Callers should provide a stable business-operation key:

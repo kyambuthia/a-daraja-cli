@@ -54,7 +54,7 @@ export async function stkPushQuery(
     timestamp
   );
 
-  return client.post<StkPushResponse>("/mpesa/stkpush/v1/query", {
+  return client.postWithoutIdempotency<StkPushResponse>("/mpesa/stkpush/v1/query", {
     BusinessShortCode: shortcode,
     Password: password,
     Timestamp: timestamp,

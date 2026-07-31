@@ -51,7 +51,9 @@ pub async fn query_status(
         occasion: occasion.into(),
     };
 
-    client.post(TRANSACTION_STATUS_PATH, &request).await
+    client
+        .post_without_idempotency(TRANSACTION_STATUS_PATH, &request)
+        .await
 }
 
 #[cfg(test)]

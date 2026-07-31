@@ -146,10 +146,26 @@ export class DarajaClient {
     return parsed;
   }
 
+  /** Send a POST query without local idempotency caching or a header. */
+  async postWithoutIdempotency<T>(path: string, body: unknown): Promise<T> {
+    const url = `${this.baseUrl()}${path}`;
+    const bodyBytes = Buffer.from(JSON.stringify(body));
+    const response = await this.sendPost(url, bodyBytes, undefined, false);
+    const text = await response.text();
+    if (!response.ok) {
+      throw apiError(response.status, text);
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch (error) {
+      throw new DarajaError(`Network error: invalid JSON response: ${error}`);
+    }
+  }
+
   private async sendPost(
     url: string,
     body: Buffer,
-    idempotencyKey: string,
+    idempotencyKey: string | undefined,
     isRetry: boolean
   ): Promise<Response> {
     const token = await this.tokenManager.getToken();
@@ -158,7 +174,7 @@ export class DarajaClient {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Idempotency-Key": idempotencyKey,
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       },
       body: new Uint8Array(body),
       signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000),
