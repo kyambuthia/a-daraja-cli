@@ -25,6 +25,11 @@ the Rust and TypeScript checks, then creates or updates a GitHub release with:
 - an `@pesaraja/sdk` npm package archive; and
 - a SHA-256 checksum beside every artifact.
 
+CI smoke-installs the packed npm artifact and the release workflow verifies
+that CLI archives contain only the expected binary and that package archives
+contain the expected entry points. GitHub Actions dependencies are pinned to
+immutable revisions.
+
 The workflow builds CLI archives for Linux x86-64, Linux ARM64, macOS x86-64,
 and macOS ARM64. The workflow does not publish to crates.io or npm. Registry publishing should
 remain a separate, explicitly authorized step with trusted publishing or

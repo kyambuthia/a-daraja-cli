@@ -36,8 +36,8 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           targets: ${{ matrix.target }}
       - name: Install Linux ARM64 linker
@@ -59,7 +59,7 @@ jobs:
           fi
           cargo build --release --locked -p cli --target "$TARGET"
           tar -C "target/${TARGET}/release" -czf "release/${archive}" pesaraja
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cli-${{ matrix.os }}-${{ matrix.arch }}
           path: release/*
@@ -68,11 +68,11 @@ jobs:
     needs: cli-assets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           components: clippy, rustfmt
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.x
           cache: npm
@@ -113,7 +113,7 @@ jobs:
           cp "target/package/${crate_archive}" "release/${crate_archive}"
           npm pack -w @pesaraja/sdk --pack-destination release
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: cli-*
           path: release
@@ -121,6 +121,11 @@ jobs:
 
       - name: Create checksums
         run: |
+          for asset in release/*.tar.gz; do
+            test "$(tar -tzf "$asset")" = "pesaraja"
+          done
+          test -n "$(tar -tzf release/daraja-rs-*.crate | grep 'Cargo.toml')"
+          test -n "$(tar -tzf release/*.tgz | grep 'package/dist/index.js')"
           for asset in release/*; do
             filename="$(basename "$asset")"
             (cd release && sha256sum "$filename" > "${filename}.sha256")
