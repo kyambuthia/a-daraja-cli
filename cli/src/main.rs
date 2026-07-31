@@ -257,22 +257,13 @@ enum Commands {
         /// Consumer key (non-interactive init)
         #[arg(long)]
         consumer_key: Option<String>,
-        /// Consumer secret (non-interactive init)
-        #[arg(long)]
-        consumer_secret: Option<String>,
-        /// Lipa Na M-Pesa passkey (non-interactive init)
-        #[arg(long)]
-        passkey: Option<String>,
         /// PayBill / Till shortcode (non-interactive init)
         #[arg(long)]
         shortcode: Option<String>,
         /// Initiator name for send / query / balance / refund (optional)
         #[arg(long)]
         initiator_name: Option<String>,
-        /// Initiator password for send / query / balance / refund (optional)
-        #[arg(long)]
-        initiator_password: Option<String>,
-        /// Error if required flags are missing instead of falling back to prompts
+        /// Error if required flags and secret environment variables are missing
         #[arg(long)]
         non_interactive: bool,
     },
@@ -325,21 +316,24 @@ impl SendType {
 struct InitOptions {
     env: Option<InitEnvironment>,
     consumer_key: Option<String>,
-    consumer_secret: Option<String>,
-    passkey: Option<String>,
     shortcode: Option<String>,
     initiator_name: Option<String>,
-    initiator_password: Option<String>,
     non_interactive: bool,
 }
 
 impl InitOptions {
     fn has_all_required(&self) -> bool {
-        self.env.is_some()
-            && self.consumer_key.is_some()
-            && self.consumer_secret.is_some()
-            && self.passkey.is_some()
-            && self.shortcode.is_some()
+        let secrets_available = std::env::var("DARAJA_CONSUMER_SECRET")
+            .ok()
+            .is_some_and(|value| !value.is_empty())
+            && match self.env {
+                Some(InitEnvironment::Sandbox) => true,
+                Some(InitEnvironment::Production) => std::env::var("DARAJA_PASSKEY")
+                    .ok()
+                    .is_some_and(|value| !value.is_empty()),
+                None => false,
+            };
+        self.env.is_some() && self.consumer_key.is_some() && self.shortcode.is_some() && secrets_available
     }
 }
 
@@ -615,21 +609,15 @@ async fn run() -> Result<(), DarajaError> {
         Commands::Init {
             env,
             consumer_key,
-            consumer_secret,
-            passkey,
             shortcode,
             initiator_name,
-            initiator_password,
             non_interactive,
         } => {
             cmd_init(InitOptions {
                 env,
                 consumer_key,
-                consumer_secret,
-                passkey,
                 shortcode,
                 initiator_name,
-                initiator_password,
                 non_interactive,
             })
             .await
@@ -791,15 +779,29 @@ fn prompt_existing_credentials_action(existing: &Credentials) -> Result<InitActi
 
 fn build_initiator_credentials(
     name: Option<String>,
-    password: Option<String>,
+    password: Option<Zeroizing<String>>,
 ) -> Result<OptionalInitiatorCredentials, DarajaError> {
     match (name, password) {
-        (Some(n), Some(p)) => Ok((Some(Zeroizing::new(n)), Some(Zeroizing::new(p)))),
+        (Some(n), Some(p)) => Ok((Some(Zeroizing::new(n)), Some(p))),
         (None, None) => Ok((None, None)),
         _ => Err(DarajaError::Config(
-            "initiator requires both --initiator-name and --initiator-password".into(),
+            "initiator requires --initiator-name and DARAJA_INITIATOR_PASSWORD".into(),
         )),
     }
+}
+
+fn required_secret_from_env(name: &str) -> Result<Zeroizing<String>, DarajaError> {
+    let value = std::env::var(name).map_err(|_| {
+        DarajaError::Config(format!(
+            "{name} is required for non-interactive init; secrets are never accepted as CLI arguments"
+        ))
+    })?;
+    if value.is_empty() {
+        return Err(DarajaError::Config(format!(
+            "{name} must not be empty for non-interactive init"
+        )));
+    }
+    Ok(Zeroizing::new(value))
 }
 
 fn looks_like_msisdn(shortcode: &str) -> bool {
@@ -841,19 +843,20 @@ fn validate_credentials_for_environment(
 }
 
 fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, DarajaError> {
-    let (initiator_name, initiator_password) =
-        build_initiator_credentials(opts.initiator_name.clone(), opts.initiator_password.clone())?;
-
     let env = opts
         .env
         .ok_or_else(|| DarajaError::Config("missing --env".into()))?;
+    let consumer_secret = required_secret_from_env("DARAJA_CONSUMER_SECRET")?;
     let passkey = match env {
-        InitEnvironment::Sandbox => SANDBOX_PASSKEY.to_string(),
-        InitEnvironment::Production => opts
-            .passkey
-            .clone()
-            .ok_or_else(|| DarajaError::Config("missing --passkey".into()))?,
+        InitEnvironment::Sandbox => Zeroizing::new(SANDBOX_PASSKEY.to_string()),
+        InitEnvironment::Production => required_secret_from_env("DARAJA_PASSKEY")?,
     };
+    let initiator_password = std::env::var("DARAJA_INITIATOR_PASSWORD")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(Zeroizing::new);
+    let (initiator_name, initiator_password) =
+        build_initiator_credentials(opts.initiator_name.clone(), initiator_password)?;
 
     Ok(Credentials {
         consumer_key: Zeroizing::new(
@@ -861,12 +864,8 @@ fn credentials_from_init_options(opts: &InitOptions) -> Result<Credentials, Dara
                 .clone()
                 .ok_or_else(|| DarajaError::Config("missing --consumer-key".into()))?,
         ),
-        consumer_secret: Zeroizing::new(
-            opts.consumer_secret
-                .clone()
-                .ok_or_else(|| DarajaError::Config("missing --consumer-secret".into()))?,
-        ),
-        passkey: Zeroizing::new(passkey),
+        consumer_secret,
+        passkey,
         shortcode: validate_shortcode(
             opts.shortcode
                 .clone()
@@ -1042,8 +1041,8 @@ fn print_init_success(env_label: &str, sdk_key: &str) -> Result<(), DarajaError>
 async fn cmd_init(opts: InitOptions) -> Result<(), DarajaError> {
     if opts.non_interactive && !opts.has_all_required() {
         return Err(DarajaError::Config(
-            "non-interactive init requires --env, --consumer-key, --consumer-secret, \
-             --passkey, and --shortcode"
+            "non-interactive init requires --env, --consumer-key, --shortcode, \
+             DARAJA_CONSUMER_SECRET, and DARAJA_PASSKEY for production"
                 .into(),
         ));
     }
@@ -1404,13 +1403,11 @@ mod tests {
         let opts = InitOptions {
             env: Some(InitEnvironment::Sandbox),
             consumer_key: Some("ck".into()),
-            consumer_secret: Some("cs".into()),
-            passkey: Some("pk".into()),
             shortcode: Some("0743121299".into()),
             initiator_name: None,
-            initiator_password: None,
             non_interactive: true,
         };
+        unsafe { std::env::set_var("DARAJA_CONSUMER_SECRET", "cs") };
 
         let err = match credentials_from_init_options(&opts) {
             Ok(_) => panic!("phone number should be rejected"),
@@ -1428,34 +1425,30 @@ mod tests {
         let opts = InitOptions {
             env: Some(InitEnvironment::Sandbox),
             consumer_key: Some("ck".into()),
-            consumer_secret: Some("cs".into()),
-            passkey: Some("pk".into()),
             shortcode: Some("174379".into()),
             initiator_name: None,
-            initiator_password: None,
             non_interactive: true,
         };
+        unsafe { std::env::set_var("DARAJA_CONSUMER_SECRET", "cs") };
 
         let creds = credentials_from_init_options(&opts).expect("business shortcode should pass");
         assert_eq!(creds.shortcode, "174379");
     }
 
     #[test]
-    fn init_options_override_sandbox_passkey_to_documented_value() {
+    fn non_interactive_sandbox_init_uses_public_passkey() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
         let opts = InitOptions {
             env: Some(InitEnvironment::Sandbox),
             consumer_key: Some("ck".into()),
-            consumer_secret: Some("cs".into()),
-            passkey: Some("wrong-passkey".into()),
             shortcode: Some("174379".into()),
             initiator_name: None,
-            initiator_password: None,
             non_interactive: true,
         };
+        unsafe { std::env::set_var("DARAJA_CONSUMER_SECRET", "cs") };
 
         let creds = credentials_from_init_options(&opts)
-            .expect("sandbox init should accept and override passkey");
+            .expect("sandbox init should use the public passkey");
         assert_eq!(creds.passkey.as_str(), SANDBOX_PASSKEY);
     }
 

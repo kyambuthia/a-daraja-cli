@@ -37,30 +37,34 @@ manager rather than copying the local key file.
 Sandbox:
 
 ```bash
-pesaraja init \
+DARAJA_CONSUMER_SECRET="$DARAJA_CONSUMER_SECRET" pesaraja init \
   --env sandbox \
   --consumer-key "$DARAJA_CONSUMER_KEY" \
-  --consumer-secret "$DARAJA_CONSUMER_SECRET" \
-  --passkey ignored-in-sandbox \
   --shortcode 174379 \
   --non-interactive
 ```
 
-The current CLI still requires `--passkey` for non-interactive sandbox setup, but it replaces the value with the fixed sandbox passkey internally.
+Sandbox uses the fixed public passkey. The consumer secret is read from
+`DARAJA_CONSUMER_SECRET`, never from a command-line argument.
 
 Production:
 
 ```bash
+DARAJA_CONSUMER_SECRET="$DARAJA_CONSUMER_SECRET" \
+DARAJA_PASSKEY="$DARAJA_PASSKEY" \
+DARAJA_INITIATOR_PASSWORD="$DARAJA_INITIATOR_PASSWORD" \
 pesaraja init \
   --env production \
   --consumer-key "$DARAJA_CONSUMER_KEY" \
-  --consumer-secret "$DARAJA_CONSUMER_SECRET" \
-  --passkey "$DARAJA_PASSKEY" \
   --shortcode "$DARAJA_SHORTCODE" \
   --initiator-name "$DARAJA_INITIATOR_NAME" \
-  --initiator-password "$DARAJA_INITIATOR_PASSWORD" \
   --non-interactive
 ```
+
+Non-interactive setup reads secrets from `DARAJA_CONSUMER_SECRET` and, for
+production, `DARAJA_PASSKEY`. If `--initiator-name` is provided,
+`DARAJA_INITIATOR_PASSWORD` is also required. Secret-valued CLI flags are not
+supported because shell history and process listings can expose them.
 
 ## Stored Files
 
