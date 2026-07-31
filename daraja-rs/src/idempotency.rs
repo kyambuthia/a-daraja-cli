@@ -24,6 +24,18 @@ pub enum AcquireResult {
     FingerprintMismatch,
 }
 
+/// Storage backend used by the client to reserve and record request outcomes.
+///
+/// Implement this trait to connect a client to shared storage such as Redis or
+/// Postgres. The default SQLite implementation remains available through
+/// `DarajaClient::new` and `with_idempotency_db`.
+pub trait IdempotencyBackend: Send {
+    fn acquire(&mut self, key: &str, fingerprint: &str) -> Result<AcquireResult, String>;
+    fn save_success(&mut self, key: &str, response: &[u8]) -> Result<(), String>;
+    fn save_failed(&mut self, key: &str) -> Result<(), String>;
+    fn save_unknown(&mut self, key: &str) -> Result<(), String>;
+}
+
 /// Local SQLite cache for idempotency keys.
 pub struct IdempotencyStore {
     conn: Connection,
@@ -168,6 +180,24 @@ impl IdempotencyStore {
             params![cutoff],
         )?;
         Ok(())
+    }
+}
+
+impl IdempotencyBackend for IdempotencyStore {
+    fn acquire(&mut self, key: &str, fingerprint: &str) -> Result<AcquireResult, String> {
+        IdempotencyStore::acquire(self, key, fingerprint).map_err(|error| error.to_string())
+    }
+
+    fn save_success(&mut self, key: &str, response: &[u8]) -> Result<(), String> {
+        IdempotencyStore::save_success(self, key, response).map_err(|error| error.to_string())
+    }
+
+    fn save_failed(&mut self, key: &str) -> Result<(), String> {
+        IdempotencyStore::save_failed(self, key).map_err(|error| error.to_string())
+    }
+
+    fn save_unknown(&mut self, key: &str) -> Result<(), String> {
+        IdempotencyStore::save_unknown(self, key).map_err(|error| error.to_string())
     }
 }
 

@@ -2,6 +2,7 @@ import { TokenManager } from "./auth.js";
 import { apiError, DarajaError } from "./error.js";
 import {
   idempotencyKeyForBody,
+  type IdempotencyBackend,
   IdempotencyStore,
   requestFingerprint,
   scopedIdempotencyKey,
@@ -13,7 +14,7 @@ import { environmentBaseUrl } from "./types.js";
 export interface DarajaClientOptions {
   baseUrlOverride?: string;
   idempotency?: boolean;
-  idempotencyStore?: IdempotencyStore;
+  idempotencyStore?: IdempotencyBackend;
   requestTimeoutMs?: number;
 }
 
@@ -23,7 +24,7 @@ export interface RequestOptions {
 
 export class DarajaClient {
   private readonly tokenManager: TokenManager;
-  private readonly idempotencyStore?: IdempotencyStore;
+  private readonly idempotencyStore?: IdempotencyBackend;
 
   constructor(
     readonly credentials: Credentials,

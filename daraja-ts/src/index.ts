@@ -38,6 +38,7 @@ export type {
 } from "./webhook.js";
 export { certificatePath, ensureSandboxCertificate } from "./certs.js";
 export { idempotencyKeyForBody } from "./idempotency.js";
+export type { AcquireResult, IdempotencyBackend } from "./idempotency.js";
 export { normalizePhone } from "./security.js";
 export {
   validateAmount,

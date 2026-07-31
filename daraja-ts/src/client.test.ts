@@ -65,6 +65,37 @@ describe("DarajaClient idempotency", () => {
     expect(request.headers).not.toHaveProperty("Idempotency-Key");
   });
 
+  it("accepts an application-provided idempotency backend", async () => {
+    const entries = new Map<string, { fingerprint: string; response: Buffer }>();
+    const backend = {
+      async acquire(key: string, fingerprint: string) {
+        const entry = entries.get(key);
+        if (!entry) return { kind: "acquired" as const };
+        if (entry.fingerprint !== fingerprint) return { kind: "fingerprint-mismatch" as const };
+        return { kind: "success" as const, response: entry.response };
+      },
+      async saveSuccess(key: string, response: Buffer) {
+        entries.set(key, { fingerprint: "", response });
+      },
+      async saveFailed() {},
+      async saveUnknown() {},
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: "token", expires_in: "3599" }))
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DarajaClient(credentials, "sandbox", {
+      baseUrlOverride: "https://daraja.invalid",
+      idempotencyStore: backend,
+    });
+
+    await client.post("/payment", { Amount: "100" });
+    expect(entries.size).toBe(1);
+  });
+
   it("rejects the same key with different request parameters", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "daraja-client-"));
     const store = new IdempotencyStore(join(tempDir, "idempotency.json"));

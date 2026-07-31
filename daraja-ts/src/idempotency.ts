@@ -37,6 +37,14 @@ export type AcquireResult =
   | { kind: "unknown" }
   | { kind: "fingerprint-mismatch" };
 
+/** Storage contract for shared idempotency backends. */
+export interface IdempotencyBackend {
+  acquire(key: string, fingerprint: string): Promise<AcquireResult>;
+  saveSuccess(key: string, response: Buffer): Promise<void>;
+  saveFailed(key: string): Promise<void>;
+  saveUnknown(key: string): Promise<void>;
+}
+
 export function requestFingerprint(body: Buffer | string): string {
   return createHash("sha256").update(body).digest("hex");
 }
@@ -108,7 +116,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export class IdempotencyStore {
+export class IdempotencyStore implements IdempotencyBackend {
   constructor(private readonly path: string = defaultCachePath()) {}
 
   private async loadFresh(): Promise<CacheFile> {

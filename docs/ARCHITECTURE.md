@@ -55,6 +55,11 @@ This is local duplicate protection, not a distributed exactly-once guarantee.
 Multiple hosts must use a shared application-level idempotency store or route a
 business operation through one coordinator.
 
+Rust applications can provide an `IdempotencyBackend` through
+`with_idempotency_backend`; TypeScript applications can provide an
+`IdempotencyBackend` in `DarajaClientOptions`. SQLite and the JSON file store
+remain local defaults, not distributed coordination.
+
 ## Credentials
 
 `pesaraja init` stores files under `~/.config/daraja/`:

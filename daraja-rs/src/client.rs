@@ -9,7 +9,7 @@
 use crate::auth::TokenManager;
 use crate::config::Credentials;
 use crate::error::DarajaError;
-use crate::idempotency::{AcquireResult, IdempotencyStore};
+use crate::idempotency::{AcquireResult, IdempotencyBackend, IdempotencyStore};
 use crate::types::Environment;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -23,7 +23,7 @@ pub struct DarajaClient {
     pub(crate) credentials: Credentials,
     environment: Environment,
     base_url_override: Option<String>,
-    idempotency: Option<Mutex<IdempotencyStore>>,
+    idempotency: Option<Mutex<Box<dyn IdempotencyBackend>>>,
 }
 
 /// Per-request controls for mutating Daraja operations.
@@ -80,9 +80,11 @@ impl DarajaClient {
             environment,
             inner.clone(),
         );
-        let idempotency = Some(Mutex::new(default_idempotency_store().map_err(|e| {
-            DarajaError::Config(format!("failed to open idempotency cache: {e}"))
-        })?));
+        let idempotency = Some(Mutex::new(Box::new(
+            default_idempotency_store().map_err(|e| {
+                DarajaError::Config(format!("failed to open idempotency cache: {e}"))
+            })?,
+        ) as Box<dyn IdempotencyBackend>));
 
         Ok(DarajaClient {
             inner,
@@ -106,8 +108,15 @@ impl DarajaClient {
             DarajaError::Config("idempotency database path is not valid UTF-8".into())
         })?)
         .map_err(|e| DarajaError::Config(format!("failed to open idempotency cache: {e}")))?;
-        self.idempotency = Some(Mutex::new(store));
+        self.idempotency = Some(Mutex::new(Box::new(store)));
         Ok(self)
+    }
+
+    /// Use an application-provided idempotency backend, such as shared Redis
+    /// or Postgres storage.
+    pub fn with_idempotency_backend<B: IdempotencyBackend + 'static>(mut self, backend: B) -> Self {
+        self.idempotency = Some(Mutex::new(Box::new(backend)));
+        self
     }
 
     /// Daraja environment this client is configured for.
@@ -266,7 +275,7 @@ impl DarajaClient {
 
     fn save_idempotency_success(&self, key: &str, response: &[u8]) {
         if let Some(store) = &self.idempotency
-            && let Ok(store) = store.lock()
+            && let Ok(mut store) = store.lock()
         {
             let _ = store.save_success(key, response);
         }
@@ -274,7 +283,7 @@ impl DarajaClient {
 
     fn save_idempotency_failed(&self, key: &str) {
         if let Some(store) = &self.idempotency
-            && let Ok(store) = store.lock()
+            && let Ok(mut store) = store.lock()
         {
             let _ = store.save_failed(key);
         }
@@ -282,7 +291,7 @@ impl DarajaClient {
 
     fn save_idempotency_unknown(&self, key: &str) {
         if let Some(store) = &self.idempotency
-            && let Ok(store) = store.lock()
+            && let Ok(mut store) = store.lock()
         {
             let _ = store.save_unknown(key);
         }

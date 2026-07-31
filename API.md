@@ -42,6 +42,8 @@ Reusing a key with different parameters is rejected. A network failure can
 leave the operation in an `unknown` state; reconcile it before using a new key.
 The local stores prevent duplicate submission by one installation, but do not
 provide distributed exactly-once processing across multiple hosts.
+Rust exposes `IdempotencyBackend` and TypeScript accepts the same storage
+contract so applications can connect shared Redis, SQL, or equivalent stores.
 
 ### Callback handling
 
