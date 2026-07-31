@@ -29,8 +29,13 @@ export {
   stkCallbackMetadata,
   stkCallbackPaid,
   verifyCallback,
+  verifyCallbackWith,
 } from "./webhook.js";
-export type { ExpectedStkPayment, MatchedStkCallback } from "./webhook.js";
+export type {
+  CallbackAuthenticator,
+  ExpectedStkPayment,
+  MatchedStkCallback,
+} from "./webhook.js";
 export { certificatePath, ensureSandboxCertificate } from "./certs.js";
 export { idempotencyKeyForBody } from "./idempotency.js";
 export { normalizePhone } from "./security.js";

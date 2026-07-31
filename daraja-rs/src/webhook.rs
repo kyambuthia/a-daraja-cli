@@ -8,6 +8,16 @@ use crate::validation::{
     validate_optional_text, validate_phone, validate_required_text, validate_shortcode,
 };
 
+/// Application-owned callback authenticator.
+///
+/// Pesaraja does not provide a default implementation because the documented
+/// Daraja callback contract does not define a cryptographic scheme. An
+/// application may implement this trait using its own verified gateway or
+/// documented provider integration.
+pub trait CallbackAuthenticator {
+    fn verify(&self, body: &[u8], signature_header: Option<&str>) -> Result<(), DarajaError>;
+}
+
 /// Verify that a C2B callback request came from Safaricom.
 ///
 /// `body` — the raw request body bytes.
@@ -27,6 +37,25 @@ pub fn verify_callback(body: &[u8], signature_header: Option<&str>) -> Result<()
     // information to implement the signature algorithm and key management
     // safely. Never treat header presence as authentication.
     Err(DarajaError::CallbackVerificationUnavailable)
+}
+
+/// Verify a callback with an application-supplied authenticator.
+///
+/// Structural parsing, callback matching, and this authenticator are separate
+/// steps. Successful verification still requires replay protection and
+/// authoritative transaction reconciliation before fulfilment.
+pub fn verify_callback_with<A: CallbackAuthenticator>(
+    body: &[u8],
+    signature_header: Option<&str>,
+    authenticator: &A,
+) -> Result<(), DarajaError> {
+    if body.is_empty() {
+        return Err(DarajaError::InvalidCallbackSignature);
+    }
+    if signature_header.is_none_or(|value| value.trim().is_empty()) {
+        return Err(DarajaError::InvalidCallbackSignature);
+    }
+    authenticator.verify(body, signature_header)
 }
 
 /// Verify that a C2B confirmation body contains the expected fields.
@@ -111,6 +140,22 @@ pub struct C2bConfirmation {
 mod tests {
     use super::*;
 
+    struct AcceptingAuthenticator;
+
+    impl CallbackAuthenticator for AcceptingAuthenticator {
+        fn verify(
+            &self,
+            body: &[u8],
+            signature_header: Option<&str>,
+        ) -> Result<(), DarajaError> {
+            if body == b"trusted" && signature_header == Some("valid") {
+                Ok(())
+            } else {
+                Err(DarajaError::InvalidCallbackSignature)
+            }
+        }
+    }
+
     #[test]
     fn missing_signature_header_is_rejected() {
         let body = br#"{"TransactionType":"Pay Bill"}"#;
@@ -188,6 +233,25 @@ mod tests {
         assert!(matches!(
             result,
             Err(DarajaError::CallbackVerificationUnavailable)
+        ));
+    }
+
+    #[test]
+    fn application_authenticator_can_verify_callback() {
+        let authenticator = AcceptingAuthenticator;
+        assert!(verify_callback_with(b"trusted", Some("valid"), &authenticator).is_ok());
+    }
+
+    #[test]
+    fn application_authenticator_cannot_bypass_basic_input_checks() {
+        let authenticator = AcceptingAuthenticator;
+        assert!(matches!(
+            verify_callback_with(b"", Some("valid"), &authenticator),
+            Err(DarajaError::InvalidCallbackSignature)
+        ));
+        assert!(matches!(
+            verify_callback_with(b"trusted", None, &authenticator),
+            Err(DarajaError::InvalidCallbackSignature)
         ));
     }
 

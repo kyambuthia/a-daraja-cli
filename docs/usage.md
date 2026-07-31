@@ -206,6 +206,11 @@ unverified callback. Matching expected IDs and amounts is not authentication.
 The CLI `receive` command is sandbox-only and labels local
 callbacks as unverified.
 
+If your application has an independently documented callback authenticator, use
+`verifyCallbackWith` (or Rust's `verify_callback_with`) to keep authentication
+separate from parsing and matching. This does not replace replay protection or
+authoritative transaction reconciliation.
+
 For `prompt`, `send`, and `refund`, provide a stable `idempotencyKey` (or
 `--idempotency-key` in the CLI) derived from your order, disbursement, or
 reversal record. Reusing a key with different parameters is rejected. If the

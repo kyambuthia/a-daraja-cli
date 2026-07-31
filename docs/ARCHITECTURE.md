@@ -84,6 +84,12 @@ Callback payloads are untrusted input. The SDKs provide:
 - Stable deduplication keys for replay prevention.
 - A fail-closed cryptographic verification placeholder.
 
+Applications that have an independently documented authenticator can supply it
+through `verify_callback_with` (Rust) or `verifyCallbackWith` (TypeScript).
+This extension point does not define or imply a Safaricom signature algorithm;
+callbacks still require replay protection and authoritative reconciliation before
+fulfilment.
+
 The public callback contract available to this project does not provide a
 cryptographic verification algorithm and key-management scheme that can be
 implemented safely. Header presence is never authentication. A callback that

@@ -7,6 +7,7 @@ import {
   stkCallbackMetadata,
   stkCallbackPaid,
   verifyCallback,
+  verifyCallbackWith,
 } from "./webhook.js";
 
 describe("webhook", () => {
@@ -86,6 +87,25 @@ describe("webhook", () => {
     expect(() => verifyCallback("{}", null)).toThrow("Invalid callback authenticator");
     expect(() => verifyCallback("{}", "sig")).toThrow(
       "cryptographic verification is unavailable"
+    );
+  });
+
+  it("supports an application-owned callback authenticator", () => {
+    expect(() =>
+      verifyCallbackWith("trusted", "valid", (body, header) => {
+        if (body.toString("utf8") !== "trusted" || header !== "valid") {
+          throw new Error("invalid callback");
+        }
+      })
+    ).not.toThrow();
+  });
+
+  it("keeps basic callback checks ahead of an application authenticator", () => {
+    expect(() => verifyCallbackWith("", "valid", () => undefined)).toThrow(
+      "Invalid callback authenticator"
+    );
+    expect(() => verifyCallbackWith("trusted", "", () => undefined)).toThrow(
+      "Invalid callback authenticator"
     );
   });
 

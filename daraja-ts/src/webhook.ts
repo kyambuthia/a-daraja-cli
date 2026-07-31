@@ -4,6 +4,12 @@ import { validatePhone, validateRequiredText, validateShortcode } from "./valida
 
 type StkCallback = StkCallbackBody["Body"]["stkCallback"];
 
+/** Application-owned callback authenticator. */
+export type CallbackAuthenticator = (
+  body: Buffer,
+  authenticatorHeader: string
+) => void;
+
 export interface ExpectedStkPayment {
   checkoutRequestId: string;
   merchantRequestId?: string;
@@ -152,6 +158,25 @@ export function verifyCallback(
   throw new DarajaError(
     "Callback cryptographic verification is unavailable; refusing to trust this callback."
   );
+}
+
+/**
+ * Verify a callback using an application-supplied authenticator.
+ *
+ * Parsing, matching, authentication, replay protection, and authoritative
+ * reconciliation remain separate steps. Do not fulfil an order from a parsed
+ * callback alone.
+ */
+export function verifyCallbackWith(
+  body: string | Buffer,
+  authenticatorHeader: string | null | undefined,
+  authenticator: CallbackAuthenticator
+): void {
+  const bytes = typeof body === "string" ? Buffer.from(body) : body;
+  if (bytes.length === 0 || !authenticatorHeader?.trim()) {
+    throw new DarajaError("Invalid callback authenticator.");
+  }
+  authenticator(bytes, authenticatorHeader);
 }
 
 /** Parse and validate a C2B confirmation or validation callback body. */
