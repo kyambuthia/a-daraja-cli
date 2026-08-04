@@ -57,6 +57,12 @@ verification is not implemented and `verifyCallback`/`verify_callback` always
 fail closed. Reconcile authoritative transaction state and atomically record a
 receipt or transaction ID before irreversible fulfilment.
 
+For an application-owned signing gateway, the Rust SDK provides
+`HmacSha256Authenticator`, which accepts `sha256=<hex-digest>` over the raw
+callback body. This is not a Safaricom signature verifier. The Rust SDK also
+provides `CallbackReplayStore` for atomic seven-day claims of callback
+deduplication keys.
+
 ## Base URLs
 
 | Environment | URL |

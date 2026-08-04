@@ -90,6 +90,9 @@ Callback payloads are untrusted input. The SDKs provide:
 - Structural and domain validation.
 - Matching of STK checkout ID, merchant request ID, amount, and receipt.
 - Stable deduplication keys for replay prevention.
+- `HmacSha256Authenticator` for an application-owned callback gateway that
+  signs the raw body with a shared secret.
+- `CallbackReplayStore` for an atomic, seven-day SQLite replay claim.
 - A fail-closed cryptographic verification placeholder.
 
 Applications that have an independently documented authenticator can supply it
@@ -106,6 +109,12 @@ matches an initiated payment is still not cryptographically trusted.
 Before irreversible fulfilment, applications should reconcile payment state
 through their authoritative Daraja transaction flow and atomically record the
 receipt or transaction ID so replay cannot fulfil twice.
+
+The HMAC helper uses the application-owned header format
+`sha256=<hex-digest>`. It does not authenticate a direct Safaricom callback and
+must not be described as a Safaricom signature verifier. Applications using a
+gateway can verify the raw body, validate the parsed callback, then claim
+`c2b_callback_deduplication_key` in `CallbackReplayStore` before fulfilment.
 
 The CLI `receive` server is therefore sandbox-only.
 

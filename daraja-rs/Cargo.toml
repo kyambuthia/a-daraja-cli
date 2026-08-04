@@ -24,6 +24,7 @@ aes-gcm = "0.10"
 base64 = "0.22"
 rsa = { version = "0.9", features = ["pem"] }
 # Security
+hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 # Idempotency
