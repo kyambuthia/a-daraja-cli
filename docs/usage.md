@@ -71,6 +71,17 @@ pesaraja simulate \
   --reference "ORDER-123"
 ```
 
+For deterministic local integration testing, run the built-in Daraja simulator:
+
+```bash
+pesaraja simulator --scenario success
+```
+
+It binds to `127.0.0.1:8787` by default and models OAuth, STK initiation, and
+STK query responses. Use `--scenario pending`, `failed`, `malformed`, or
+`provider-drift` to exercise ambiguous, rejected, malformed, or provider-shape
+responses without contacting Safaricom.
+
 Register public C2B URLs:
 
 ```bash

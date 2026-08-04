@@ -3,6 +3,7 @@
 mod input;
 mod profiles;
 mod receive;
+mod simulator;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daraja_rs::api::b2c::{b2c_payment, b2c_payment_with_idempotency_key};
@@ -179,6 +180,15 @@ enum Commands {
         url: String,
         /// Endpoint: confirm (default) or validate
         endpoint: Option<String>,
+    },
+    /// Run a local, deterministic Daraja-compatible HTTP simulator.
+    Simulator {
+        /// Local port for the simulator.
+        #[arg(long, default_value_t = 8787)]
+        port: u16,
+        /// Response behavior to exercise.
+        #[arg(long, value_enum, default_value_t = simulator::Scenario::Success)]
+        scenario: simulator::Scenario,
     },
 
     // ── Send money to someone ───────────────────────────────────
@@ -798,6 +808,7 @@ async fn run() -> Result<(), DarajaError> {
             validation_url,
         } => cmd_register(shortcode, response_type, confirm_url, validation_url, json).await,
         Commands::Webhook { url, endpoint } => cmd_webhook(url, endpoint, json).await,
+        Commands::Simulator { port, scenario } => simulator::run(port, scenario).await,
         Commands::Doctor => cmd_doctor(json).await,
     }
 }
