@@ -60,6 +60,12 @@ Rust applications can provide an `IdempotencyBackend` through
 `IdempotencyBackend` in `DarajaClientOptions`. SQLite and the JSON file store
 remain local defaults, not distributed coordination.
 
+The Rust SDK also provides `PaymentStore`, a SQLite ledger with immutable
+payment events. Records are created before a provider request and move through
+guarded `created`, `submitted`, `pending`, `succeeded`, `failed`, `unknown`,
+and `reversed` states. An `unknown` result can be reconciled explicitly; it
+cannot be silently retried as a new payment.
+
 ## Credentials
 
 `pesaraja init` stores files under `~/.config/daraja/`:

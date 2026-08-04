@@ -45,6 +45,11 @@ provide distributed exactly-once processing across multiple hosts.
 Rust exposes `IdempotencyBackend` and TypeScript accepts the same storage
 contract so applications can connect shared Redis, SQL, or equivalent stores.
 
+The Rust SDK's `PaymentStore` provides a durable SQLite payment ledger with
+guarded lifecycle transitions and immutable events. Applications should create
+the record before sending a payment request and use the `unknown` state when a
+network outcome cannot be established.
+
 ### Callback handling
 
 Callback bodies are untrusted input. Pesaraja validates their structure and

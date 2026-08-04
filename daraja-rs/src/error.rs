@@ -67,6 +67,9 @@ pub enum DarajaError {
     #[error("Payment outcome is unknown; reconcile the transaction before retrying.")]
     IdempotencyOutcomeUnknown,
 
+    #[error("Invalid payment state transition: {from} -> {to}")]
+    InvalidPaymentTransition { from: String, to: String },
+
     #[error("Transaction not found: {0}")]
     TransactionNotFound(String),
 
@@ -143,6 +146,10 @@ mod tests {
             DarajaError::IdempotencyKeyReused,
             DarajaError::IdempotencyPreviousFailed,
             DarajaError::IdempotencyOutcomeUnknown,
+            DarajaError::InvalidPaymentTransition {
+                from: "created".into(),
+                to: "reversed".into(),
+            },
             DarajaError::TransactionNotFound("test".into()),
             DarajaError::ReversalFailed("test".into()),
             DarajaError::MissingApiKey,
@@ -151,7 +158,7 @@ mod tests {
                 actual: "live".into(),
             },
         ];
-        assert_eq!(errors.len(), 22);
+        assert_eq!(errors.len(), 23);
     }
 
     #[test]

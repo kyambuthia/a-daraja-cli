@@ -7,6 +7,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod idempotency;
+pub mod payments;
 pub mod security;
 pub mod types;
 pub mod validation;
