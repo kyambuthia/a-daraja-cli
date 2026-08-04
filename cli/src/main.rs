@@ -1802,7 +1802,10 @@ async fn cmd_prompt_status(checkout_id: String, json: bool) -> Result<(), Daraja
         println!("  Checkout Request ID:  {}", resp.checkout_request_id);
         println!("  Response Code:        {}", resp.response_code);
         println!("  Response Description: {}", resp.response_description);
-        println!("  Customer Message:     {}", resp.customer_message);
+        println!(
+            "  Customer Message:     {}",
+            resp.customer_message.as_deref().unwrap_or("(not provided)")
+        );
         println!();
     }
 

@@ -63,6 +63,28 @@ pub struct StkPushResponse {
     pub customer_message: String,
 }
 
+/// Response returned by the STK Push query endpoint.
+///
+/// Daraja uses the same envelope for initiating and querying prompts, but the
+/// query response may additionally contain a result code and description.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StkQueryResponse {
+    #[serde(rename = "MerchantRequestID")]
+    pub merchant_request_id: String,
+    #[serde(rename = "CheckoutRequestID")]
+    pub checkout_request_id: String,
+    #[serde(rename = "ResponseCode")]
+    pub response_code: String,
+    #[serde(rename = "ResponseDescription")]
+    pub response_description: String,
+    #[serde(rename = "CustomerMessage", default)]
+    pub customer_message: Option<String>,
+    #[serde(rename = "ResultCode", default)]
+    pub result_code: Option<serde_json::Value>,
+    #[serde(rename = "ResultDesc", default)]
+    pub result_description: Option<String>,
+}
+
 /// B2C payment request body.
 #[derive(Debug, Clone, Serialize)]
 pub struct B2cRequest {

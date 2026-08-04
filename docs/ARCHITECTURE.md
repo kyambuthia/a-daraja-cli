@@ -66,6 +66,10 @@ guarded `created`, `submitted`, `pending`, `succeeded`, `failed`, `unknown`,
 and `reversed` states. An `unknown` result can be reconciled explicitly; it
 cannot be silently retried as a new payment.
 
+`reconcile_stk_payment` queries the provider using the stored checkout request
+ID and applies only an explicit provider result. Missing result codes remain
+pending, and repeating the same successful reconciliation is idempotent.
+
 ## Credentials
 
 `pesaraja init` stores files under `~/.config/daraja/`:

@@ -4,8 +4,9 @@
 
 use crate::client::{DarajaClient, RequestOptions};
 use crate::error::DarajaError;
+use crate::payments::{Payment, PaymentStore, ReconciliationOutcome};
 use crate::security::{current_timestamp, generate_password};
-use crate::types::{StkPushRequest, StkPushResponse, StkTransactionType};
+use crate::types::{StkPushRequest, StkPushResponse, StkQueryResponse, StkTransactionType};
 use crate::validation::{validate_amount, validate_phone, validate_required_text, validate_url};
 use serde::Serialize;
 
@@ -202,7 +203,7 @@ async fn send_stk_push(
 pub async fn stk_push_query(
     client: &DarajaClient,
     checkout_request_id: &str,
-) -> Result<StkPushResponse, DarajaError> {
+) -> Result<StkQueryResponse, DarajaError> {
     validate_required_text("checkout request ID", checkout_request_id, 128)?;
     let shortcode = &client.credentials.shortcode;
     let passkey = client.credentials.passkey.as_str();
@@ -221,9 +222,56 @@ pub async fn stk_push_query(
         .await
 }
 
+/// Reconcile a stored payment through the authoritative STK query endpoint.
+///
+/// Network failures leave the payment unchanged so callers can retry the
+/// reconciliation operation. A missing provider result code is treated as
+/// pending rather than success.
+pub async fn reconcile_stk_payment(
+    client: &DarajaClient,
+    store: &mut PaymentStore,
+    payment_id: &str,
+) -> Result<Payment, DarajaError> {
+    let payment = store
+        .get(payment_id)?
+        .ok_or_else(|| DarajaError::TransactionNotFound(payment_id.into()))?;
+    let checkout_request_id = payment.checkout_request_id.as_deref().ok_or_else(|| {
+        DarajaError::Config("payment has no checkout request ID to reconcile".into())
+    })?;
+    let response = stk_push_query(client, checkout_request_id).await?;
+    let outcome = match query_result_code(&response.result_code) {
+        Some(0) => ReconciliationOutcome::Succeeded {
+            transaction_id: None,
+            receipt_number: None,
+            detail: response
+                .result_description
+                .clone()
+                .unwrap_or_else(|| "provider status query succeeded".into()),
+        },
+        Some(code) => ReconciliationOutcome::Failed {
+            detail: response
+                .result_description
+                .clone()
+                .unwrap_or_else(|| format!("provider result code {code}")),
+        },
+        None => ReconciliationOutcome::Pending {
+            detail: response.response_description.clone(),
+        },
+    };
+    store.apply_reconciliation_outcome(payment_id, outcome)
+}
+
+fn query_result_code(value: &Option<serde_json::Value>) -> Option<i64> {
+    match value.as_ref()? {
+        serde_json::Value::Number(number) => number.as_i64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::StkPushOptions;
+    use super::{StkPushOptions, StkQueryResponse, query_result_code};
     use crate::types::StkTransactionType;
 
     #[test]
@@ -258,6 +306,29 @@ mod tests {
     #[test]
     fn amount_is_formatted_as_integer_string() {
         assert_eq!(100u64.to_string(), "100");
+    }
+
+    #[test]
+    fn query_without_result_code_remains_pending() {
+        let response = StkQueryResponse {
+            merchant_request_id: "mr-1".into(),
+            checkout_request_id: "ws_CO_1".into(),
+            response_code: "0".into(),
+            response_description: "Request accepted".into(),
+            customer_message: None,
+            result_code: None,
+            result_description: None,
+        };
+        assert_eq!(query_result_code(&response.result_code), None);
+    }
+
+    #[test]
+    fn query_result_code_accepts_string_and_number_forms() {
+        assert_eq!(query_result_code(&Some(serde_json::json!("0"))), Some(0));
+        assert_eq!(
+            query_result_code(&Some(serde_json::json!(1032))),
+            Some(1032)
+        );
     }
 
     #[test]

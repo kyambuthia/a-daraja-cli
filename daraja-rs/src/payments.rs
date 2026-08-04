@@ -354,6 +354,69 @@ pub struct PaymentEvent {
     pub created_at: i64,
 }
 
+/// Provider outcome obtained while reconciling an ambiguous payment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReconciliationOutcome {
+    Pending {
+        detail: String,
+    },
+    Succeeded {
+        transaction_id: Option<String>,
+        receipt_number: Option<String>,
+        detail: String,
+    },
+    Failed {
+        detail: String,
+    },
+}
+
+impl PaymentStore {
+    /// Apply an authoritative provider outcome without creating duplicate
+    /// lifecycle events when the same result is observed again.
+    pub fn apply_reconciliation_outcome(
+        &mut self,
+        payment_id: &str,
+        outcome: ReconciliationOutcome,
+    ) -> Result<Payment, DarajaError> {
+        let current = self
+            .get(payment_id)?
+            .ok_or_else(|| DarajaError::TransactionNotFound(payment_id.into()))?;
+        match outcome {
+            ReconciliationOutcome::Pending { detail } => {
+                if current.status == PaymentStatus::Pending {
+                    return Ok(current);
+                }
+                self.transition(payment_id, PaymentStatus::Pending, Some(&detail))
+            }
+            ReconciliationOutcome::Succeeded {
+                transaction_id,
+                receipt_number,
+                detail,
+            } => {
+                self.attach_provider_ids(
+                    payment_id,
+                    None,
+                    None,
+                    transaction_id.as_deref(),
+                    receipt_number.as_deref(),
+                )?;
+                if current.status == PaymentStatus::Succeeded {
+                    return self.get(payment_id)?.ok_or_else(|| {
+                        DarajaError::Config("succeeded payment could not be reloaded".into())
+                    });
+                }
+                self.transition(payment_id, PaymentStatus::Succeeded, Some(&detail))
+            }
+            ReconciliationOutcome::Failed { detail } => {
+                if current.status == PaymentStatus::Failed {
+                    return Ok(current);
+                }
+                self.transition(payment_id, PaymentStatus::Failed, Some(&detail))
+            }
+        }
+    }
+}
+
 fn payment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Payment> {
     let amount_kes: i64 = row.get(3)?;
     Ok(Payment {
@@ -491,6 +554,27 @@ mod tests {
             store.get("pay_001").unwrap().unwrap().status,
             PaymentStatus::Succeeded
         );
+    }
+
+    #[test]
+    fn repeated_reconciliation_is_idempotent() {
+        let (_directory, mut store) = store();
+        store.create(&payment()).unwrap();
+        store
+            .transition("pay_001", PaymentStatus::Submitted, None)
+            .unwrap();
+        let outcome = ReconciliationOutcome::Succeeded {
+            transaction_id: Some("QAB123".into()),
+            receipt_number: Some("QAB123".into()),
+            detail: "status query matched".into(),
+        };
+        store
+            .apply_reconciliation_outcome("pay_001", outcome.clone())
+            .unwrap();
+        store
+            .apply_reconciliation_outcome("pay_001", outcome)
+            .unwrap();
+        assert_eq!(store.events("pay_001").unwrap().len(), 3);
     }
 
     #[test]

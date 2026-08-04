@@ -50,6 +50,10 @@ guarded lifecycle transitions and immutable events. Applications should create
 the record before sending a payment request and use the `unknown` state when a
 network outcome cannot be established.
 
+`reconcile_stk_payment` queries an STK checkout ID from a stored payment and
+applies success, failure, or pending status. A missing result code is never
+treated as success.
+
 ### Callback handling
 
 Callback bodies are untrusted input. Pesaraja validates their structure and
