@@ -130,6 +130,9 @@ enum Commands {
         /// Stable business-operation key for safely repeating this exact request
         #[arg(long)]
         idempotency_key: Option<String>,
+        /// Loopback-only Daraja endpoint for local simulator testing.
+        #[arg(long)]
+        base_url: Option<String>,
     },
     /// Check if the customer completed a payment prompt
     #[command(name = "prompt-status", visible_aliases = ["stk-query"])]
@@ -137,6 +140,9 @@ enum Commands {
         /// Checkout ID from a prior prompt (e.g. ws_CO_...)
         #[arg(long)]
         checkout_id: String,
+        /// Loopback-only Daraja endpoint for local simulator testing.
+        #[arg(long)]
+        base_url: Option<String>,
     },
     /// Inspect and reconcile locally persisted payment records.
     Payments {
@@ -344,6 +350,9 @@ enum PaymentCommands {
         /// Local payment identifier.
         #[arg(long)]
         id: String,
+        /// Loopback-only Daraja endpoint for local simulator testing.
+        #[arg(long)]
+        base_url: Option<String>,
     },
     /// Show a safe retry plan; submission requires a future explicit workflow.
     Retry {
@@ -770,6 +779,7 @@ async fn run() -> Result<(), DarajaError> {
             yes,
             dry_run,
             idempotency_key,
+            base_url,
         } => {
             cmd_prompt(
                 phone,
@@ -781,10 +791,14 @@ async fn run() -> Result<(), DarajaError> {
                 yes,
                 dry_run,
                 idempotency_key,
+                base_url,
             )
             .await
         }
-        Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id, json).await,
+        Commands::PromptStatus {
+            checkout_id,
+            base_url,
+        } => cmd_prompt_status(checkout_id, base_url, json).await,
         Commands::Payments { command } => cmd_payments(command, json).await,
         Commands::Receive { port } => receive::run(port).await,
         Commands::Simulate {
@@ -1483,6 +1497,42 @@ pub(crate) async fn load_daraja() -> Result<Daraja, DarajaError> {
     Daraja::from_env()
 }
 
+pub(crate) async fn load_daraja_with_base_url(
+    base_url: Option<&str>,
+) -> Result<Daraja, DarajaError> {
+    let Some(base_url) = base_url else {
+        return load_daraja().await;
+    };
+    let base_url = validate_loopback_base_url(base_url)?;
+    let daraja = load_daraja().await?;
+    if daraja.client().environment() != Environment::Sandbox {
+        return Err(DarajaError::Config(
+            "--base-url is only available with sandbox credentials".into(),
+        ));
+    }
+    Ok(daraja.with_base_url(base_url))
+}
+
+fn validate_loopback_base_url(value: &str) -> Result<String, DarajaError> {
+    let url = reqwest::Url::parse(value)
+        .map_err(|error| DarajaError::Config(format!("invalid --base-url: {error}")))?;
+    let host = url.host_str().unwrap_or_default();
+    if url.scheme() != "http"
+        || !matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || (url.path() != "/" && !url.path().is_empty())
+    {
+        return Err(DarajaError::Config(
+            "--base-url must be an http loopback URL without credentials, query, fragment, or path"
+                .into(),
+        ));
+    }
+    Ok(value.trim_end_matches('/').to_string())
+}
+
 pub(crate) fn load_shortcode() -> Result<String, DarajaError> {
     if let Some((profile, credentials)) = load_active_profile_context()? {
         validate_credentials_for_environment(profile.environment, &credentials)?;
@@ -1767,6 +1817,32 @@ mod tests {
         let shortcode = load_shortcode().expect("active profile shortcode");
         assert_eq!(shortcode, "174379");
     }
+
+    #[test]
+    fn base_url_accepts_loopback_http_and_removes_trailing_slash() {
+        assert_eq!(
+            validate_loopback_base_url("http://127.0.0.1:8787/").expect("loopback URL should pass"),
+            "http://127.0.0.1:8787"
+        );
+        assert!(validate_loopback_base_url("http://localhost:8787").is_ok());
+        assert!(validate_loopback_base_url("http://[::1]:8787").is_ok());
+    }
+
+    #[test]
+    fn base_url_rejects_non_loopback_and_unsafe_urls() {
+        for candidate in [
+            "https://127.0.0.1:8787",
+            "http://example.com:8787",
+            "http://user:pass@127.0.0.1:8787",
+            "http://127.0.0.1:8787/simulator",
+            "http://127.0.0.1:8787/?token=secret",
+        ] {
+            assert!(
+                validate_loopback_base_url(candidate).is_err(),
+                "unsafe base URL should be rejected: {candidate}"
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // Mirrors the user-facing Clap command fields.
@@ -1780,11 +1856,16 @@ async fn cmd_prompt(
     yes: bool,
     dry_run: bool,
     idempotency_key: Option<String>,
+    base_url: Option<String>,
 ) -> Result<(), DarajaError> {
     let amount = parse_kes_amount(&amount)?;
     let phone = validate_phone(&phone)?;
 
     let callback = resolve_callback_url(callback_url)?;
+    let base_url = base_url
+        .as_deref()
+        .map(validate_loopback_base_url)
+        .transpose()?;
 
     if dry_run {
         print_dry_run(
@@ -1813,7 +1894,7 @@ async fn cmd_prompt(
         return Ok(());
     }
 
-    let daraja = load_daraja().await?;
+    let daraja = load_daraja_with_base_url(base_url.as_deref()).await?;
     println!();
     confirm_payment(&phone, amount, &description, yes)?;
     println!();
@@ -1907,8 +1988,12 @@ async fn cmd_prompt(
     Ok(())
 }
 
-async fn cmd_prompt_status(checkout_id: String, json: bool) -> Result<(), DarajaError> {
-    let daraja = load_daraja().await?;
+async fn cmd_prompt_status(
+    checkout_id: String,
+    base_url: Option<String>,
+    json: bool,
+) -> Result<(), DarajaError> {
+    let daraja = load_daraja_with_base_url(base_url.as_deref()).await?;
 
     let resp = stk_push_query(daraja.client(), &checkout_id).await?;
 
@@ -2019,9 +2104,9 @@ async fn cmd_payments(command: PaymentCommands, json: bool) -> Result<(), Daraja
                 }
             }
         }
-        PaymentCommands::Reconcile { id } => {
+        PaymentCommands::Reconcile { id, base_url } => {
             let mut store = open_payment_store()?;
-            let daraja = load_daraja().await?;
+            let daraja = load_daraja_with_base_url(base_url.as_deref()).await?;
             let payment = reconcile_stk_payment(daraja.client(), &mut store, &id).await?;
             if json {
                 println!(

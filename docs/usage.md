@@ -97,6 +97,22 @@ STK query responses. Use `--scenario pending`, `failed`, `malformed`, or
 `provider-drift` to exercise ambiguous, rejected, malformed, or provider-shape
 responses without contacting Safaricom.
 
+Point a sandbox prompt at the local simulator with the loopback-only endpoint
+override:
+
+```bash
+pesaraja prompt \
+  --phone 254712345678 \
+  --amount 500 \
+  --reference "ORDER-123" \
+  --callback-url http://127.0.0.1:8181/callback \
+  --base-url http://127.0.0.1:8787
+```
+
+The same `--base-url` can be used with `pesaraja prompt-status` and
+`pesaraja payments reconcile`. It accepts only an HTTP loopback host and
+requires sandbox credentials; production endpoints cannot be overridden.
+
 Register public C2B URLs:
 
 ```bash

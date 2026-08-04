@@ -71,6 +71,14 @@ impl Daraja {
     pub fn client(&self) -> &DarajaClient {
         &self.client
     }
+
+    /// Use an explicit endpoint, primarily for local simulator and test
+    /// environments. Callers are responsible for restricting this override
+    /// to trusted endpoints.
+    pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
+        self.client = self.client.with_base_url(url.into());
+        self
+    }
 }
 
 #[cfg(test)]
