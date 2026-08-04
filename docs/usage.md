@@ -52,6 +52,21 @@ pesaraja prompt-status --checkout-id ws_CO_...
 pesaraja --json prompt-status --checkout-id ws_CO_...
 ```
 
+Inspect locally persisted payment state:
+
+```bash
+pesaraja payments list
+pesaraja payments inspect --id pay_...
+pesaraja payments reconcile --id pay_...
+```
+
+If a payment is definitively failed, preview a safe retry plan without sending
+anything:
+
+```bash
+pesaraja payments retry --id pay_... --dry-run
+```
+
 ## Receive And Simulate C2B Payments
 
 Start the local callback server:

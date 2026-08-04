@@ -81,6 +81,7 @@ profiles.json             non-secret profile metadata
 profiles/personal.enc     encrypted profile credentials
 idempotency.db            Rust idempotency state
 idempotency-ts.json        TypeScript idempotency state
+payments.db               CLI payment ledger and event history
 ```
 
 The `dsk_test_` and `dsk_live_` prefixes select sandbox and production. The

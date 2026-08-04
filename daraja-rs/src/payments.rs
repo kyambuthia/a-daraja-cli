@@ -30,7 +30,7 @@ impl PaymentStatus {
         }
     }
 
-    fn parse(value: &str) -> Result<Self, DarajaError> {
+    pub fn parse(value: &str) -> Result<Self, DarajaError> {
         match value {
             "created" => Ok(Self::Created),
             "submitted" => Ok(Self::Submitted),
@@ -340,6 +340,28 @@ impl PaymentStore {
             .map_err(|error| DarajaError::Config(format!("read payment events: {error}")))?;
         rows.map(|row| {
             row.map_err(|error| DarajaError::Config(format!("decode payment event: {error}")))
+        })
+        .collect()
+    }
+
+    /// List payments, optionally narrowed to one lifecycle status.
+    pub fn list(&self, status: Option<PaymentStatus>) -> Result<Vec<Payment>, DarajaError> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT id, environment, shortcode, amount_kes, phone, reference,
+                        idempotency_key, merchant_request_id, checkout_request_id,
+                        transaction_id, receipt_number, status, created_at, updated_at
+                 FROM payments
+                 WHERE (?1 IS NULL OR status = ?1)
+                 ORDER BY created_at DESC, id DESC",
+            )
+            .map_err(|error| DarajaError::Config(format!("prepare payment list: {error}")))?;
+        let rows = statement
+            .query_map(params![status.map(PaymentStatus::as_str)], payment_from_row)
+            .map_err(|error| DarajaError::Config(format!("read payment list: {error}")))?;
+        rows.map(|row| {
+            row.map_err(|error| DarajaError::Config(format!("decode payment list: {error}")))
         })
         .collect()
     }

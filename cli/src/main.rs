@@ -12,7 +12,8 @@ use daraja_rs::api::c2b::{register_urls, simulate_c2b};
 use daraja_rs::api::reversal::{reverse_transaction, reverse_transaction_with_idempotency_key};
 use daraja_rs::api::status::query_status;
 use daraja_rs::api::stk_push::{
-    stk_push_query, stk_push_with_type, stk_push_with_type_and_idempotency_key,
+    reconcile_stk_payment, stk_push_query, stk_push_with_type,
+    stk_push_with_type_and_idempotency_key,
 };
 
 use daraja_rs::Daraja;
@@ -20,6 +21,7 @@ use daraja_rs::auth::TokenManager;
 use daraja_rs::certs::ensure_sandbox_certificate;
 use daraja_rs::config::{self, Credentials};
 use daraja_rs::error::DarajaError;
+use daraja_rs::payments::{NewPayment, Payment, PaymentStatus, PaymentStore};
 use daraja_rs::types::{B2cCommand, Environment, StkTransactionType};
 use daraja_rs::validation::{validate_phone, validate_url};
 use daraja_rs::webhook::C2bConfirmation;
@@ -27,6 +29,7 @@ use dialoguer::{Confirm, Input, Password, Select, theme::ColorfulTheme};
 use input::parse_kes_amount;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use profiles::{
@@ -134,6 +137,11 @@ enum Commands {
         /// Checkout ID from a prior prompt (e.g. ws_CO_...)
         #[arg(long)]
         checkout_id: String,
+    },
+    /// Inspect and reconcile locally persisted payment records.
+    Payments {
+        #[command(subcommand)]
+        command: PaymentCommands,
     },
 
     // ── Receive money (PayBill / C2B) ───────────────────────────
@@ -315,6 +323,37 @@ enum Commands {
     ExportKey,
     /// Pre-flight check before going live
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum PaymentCommands {
+    /// List persisted payments.
+    List {
+        /// Optional lifecycle status filter.
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Show one payment and its immutable event history.
+    Inspect {
+        /// Local payment identifier.
+        #[arg(long)]
+        id: String,
+    },
+    /// Query Daraja and apply the authoritative STK result.
+    Reconcile {
+        /// Local payment identifier.
+        #[arg(long)]
+        id: String,
+    },
+    /// Show a safe retry plan; submission requires a future explicit workflow.
+    Retry {
+        /// Local payment identifier.
+        #[arg(long)]
+        id: String,
+        /// Required to print the retry plan instead of refusing the operation.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -601,6 +640,22 @@ fn credentials_path() -> Result<PathBuf, DarajaError> {
     )))
 }
 
+fn payment_store_path() -> Result<PathBuf, DarajaError> {
+    let home = std::env::var("HOME")
+        .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
+    Ok(PathBuf::from(format!("{home}/.config/daraja/payments.db")))
+}
+
+fn open_payment_store() -> Result<PaymentStore, DarajaError> {
+    let path = payment_store_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            DarajaError::Config(format!("create payment store directory: {error}"))
+        })?;
+    }
+    PaymentStore::new(path)
+}
+
 fn key_path() -> Result<PathBuf, DarajaError> {
     let home = std::env::var("HOME")
         .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
@@ -729,6 +784,7 @@ async fn run() -> Result<(), DarajaError> {
             .await
         }
         Commands::PromptStatus { checkout_id } => cmd_prompt_status(checkout_id, json).await,
+        Commands::Payments { command } => cmd_payments(command, json).await,
         Commands::Receive { port } => receive::run(port).await,
         Commands::Simulate {
             phone,
@@ -1748,6 +1804,26 @@ async fn cmd_prompt(
     confirm_payment(&phone, amount, &description, yes)?;
     println!();
 
+    let payment_id = format!("pay_{}", Uuid::new_v4());
+    let mut payment_store = open_payment_store()?;
+    payment_store.create(&NewPayment {
+        id: payment_id.clone(),
+        environment: match daraja.client().environment() {
+            Environment::Sandbox => "sandbox".into(),
+            Environment::Production => "production".into(),
+        },
+        shortcode: load_shortcode()?,
+        amount_kes: amount,
+        phone: Some(phone.clone()),
+        reference: reference.clone(),
+        idempotency_key: idempotency_key.clone(),
+    })?;
+    payment_store.transition(
+        &payment_id,
+        PaymentStatus::Submitted,
+        Some("STK request submitted"),
+    )?;
+
     let transaction_type = payment_type.to_stk_transaction_type();
     let resp = match idempotency_key.as_deref() {
         Some(key) => {
@@ -1761,7 +1837,7 @@ async fn cmd_prompt(
                 transaction_type,
                 key,
             )
-            .await?
+            .await
         }
         None => {
             stk_push_with_type(
@@ -1773,12 +1849,40 @@ async fn cmd_prompt(
                 &callback,
                 transaction_type,
             )
-            .await?
+            .await
         }
     };
+    let resp = match resp {
+        Ok(response) => response,
+        Err(error) => {
+            let _ = payment_store.transition(
+                &payment_id,
+                PaymentStatus::Unknown,
+                Some("request outcome was not established"),
+            );
+            return Err(error);
+        }
+    };
+    payment_store.attach_provider_ids(
+        &payment_id,
+        Some(&resp.merchant_request_id),
+        Some(&resp.checkout_request_id),
+        None,
+        None,
+    )?;
+    payment_store.transition(
+        &payment_id,
+        if resp.response_code == "0" {
+            PaymentStatus::Pending
+        } else {
+            PaymentStatus::Failed
+        },
+        Some(&resp.response_description),
+    )?;
 
     println!("✓ Payment prompt sent");
     println!();
+    println!("  Local Payment ID:      {payment_id}");
     println!("  Merchant Request ID:  {}", resp.merchant_request_id);
     println!("  Checkout Request ID:  {}", resp.checkout_request_id);
     println!("  Response Code:        {}", resp.response_code);
@@ -1821,6 +1925,163 @@ async fn cmd_prompt_status(checkout_id: String, json: bool) -> Result<(), Daraja
     }
 
     Ok(())
+}
+
+async fn cmd_payments(command: PaymentCommands, json: bool) -> Result<(), DarajaError> {
+    match command {
+        PaymentCommands::List { status } => {
+            let status = status.as_deref().map(PaymentStatus::parse).transpose()?;
+            let store = open_payment_store()?;
+            let payments = store.list(status)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &payments.iter().map(payment_json).collect::<Vec<_>>()
+                    )
+                    .unwrap()
+                );
+            } else if payments.is_empty() {
+                println!("No persisted payments.");
+            } else {
+                for payment in payments {
+                    println!(
+                        "{}  {:<9}  KES {:>8}  {}  {}",
+                        payment.id,
+                        payment.status.as_str(),
+                        payment.amount_kes,
+                        payment.reference,
+                        payment.checkout_request_id.as_deref().unwrap_or("—")
+                    );
+                }
+            }
+        }
+        PaymentCommands::Inspect { id } => {
+            let store = open_payment_store()?;
+            let payment = store
+                .get(&id)?
+                .ok_or_else(|| DarajaError::TransactionNotFound(id.clone()))?;
+            let events = store.events(&id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "payment": payment_json(&payment),
+                        "events": events.iter().map(|event| serde_json::json!({
+                            "from": event.from,
+                            "to": event.to,
+                            "detail": event.detail,
+                            "created_at": event.created_at,
+                        })).collect::<Vec<_>>(),
+                    }))
+                    .unwrap()
+                );
+            } else {
+                println!("Payment {}", payment.id);
+                println!("  Status:       {}", payment.status.as_str());
+                println!("  Environment:  {}", payment.environment);
+                println!("  Amount:       KES {}", payment.amount_kes);
+                println!(
+                    "  Phone:        {}",
+                    payment.phone.as_deref().unwrap_or("—")
+                );
+                println!("  Reference:    {}", payment.reference);
+                println!(
+                    "  Checkout ID:  {}",
+                    payment.checkout_request_id.as_deref().unwrap_or("—")
+                );
+                println!("  Events:");
+                for event in events {
+                    println!(
+                        "    {} -> {}{}",
+                        event.from.as_deref().unwrap_or("—"),
+                        event.to,
+                        event
+                            .detail
+                            .as_deref()
+                            .map(|detail| format!(" ({detail})"))
+                            .unwrap_or_default()
+                    );
+                }
+            }
+        }
+        PaymentCommands::Reconcile { id } => {
+            let mut store = open_payment_store()?;
+            let daraja = load_daraja().await?;
+            let payment = reconcile_stk_payment(daraja.client(), &mut store, &id).await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payment_json(&payment)).unwrap()
+                );
+            } else {
+                println!(
+                    "✓ Payment {} reconciled as {}",
+                    payment.id,
+                    payment.status.as_str()
+                );
+            }
+        }
+        PaymentCommands::Retry { id, dry_run } => {
+            let store = open_payment_store()?;
+            let payment = store
+                .get(&id)?
+                .ok_or_else(|| DarajaError::TransactionNotFound(id.clone()))?;
+            if payment.status != PaymentStatus::Failed {
+                return Err(DarajaError::Config(format!(
+                    "payment is {}; reconcile unknown/pending payments before considering a retry",
+                    payment.status.as_str()
+                )));
+            }
+            if !dry_run {
+                return Err(DarajaError::Config(
+                    "retry is currently plan-only; pass --dry-run to inspect the safe retry payload"
+                        .into(),
+                ));
+            }
+            let retry_key = format!(
+                "{}:retry",
+                payment.idempotency_key.as_deref().unwrap_or(&payment.id)
+            );
+            let output = serde_json::json!({
+                "original_payment_id": payment.id,
+                "status": payment.status.as_str(),
+                "phone": payment.phone,
+                "amount_kes": payment.amount_kes,
+                "reference": payment.reference,
+                "new_idempotency_key": retry_key,
+                "request_sent": false,
+            });
+            if json {
+                println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            } else {
+                println!("Retry plan (no request sent):");
+                println!("  Original payment: {}", payment.id);
+                println!("  Amount:           KES {}", payment.amount_kes);
+                println!("  New idempotency:  {retry_key}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn payment_json(payment: &Payment) -> serde_json::Value {
+    serde_json::json!({
+        "id": payment.id,
+        "environment": payment.environment,
+        "shortcode": payment.shortcode,
+        "amount_kes": payment.amount_kes,
+        "phone": payment.phone,
+        "reference": payment.reference,
+        "idempotency_key": payment.idempotency_key,
+        "merchant_request_id": payment.merchant_request_id,
+        "checkout_request_id": payment.checkout_request_id,
+        "transaction_id": payment.transaction_id,
+        "receipt_number": payment.receipt_number,
+        "status": payment.status.as_str(),
+        "created_at": payment.created_at,
+        "updated_at": payment.updated_at,
+    })
 }
 
 async fn cmd_simulate(
