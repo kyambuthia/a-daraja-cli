@@ -670,6 +670,7 @@ pub(crate) fn load_sdk_key() -> Result<String, DarajaError> {
         return Ok(key);
     }
     let path = key_path()?;
+    profiles::ensure_private_permissions(&path)?;
     let key = std::fs::read_to_string(&path)
         .map(|s| s.trim().to_string())
         .map_err(|_| {
@@ -1542,7 +1543,8 @@ mod tests {
         let sdk_key = generate_sdk_key("test");
         let config_dir = home.path().join(".config/daraja");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
-        std::fs::write(config_dir.join("key"), &sdk_key).expect("write key");
+        profiles::atomic_write_private(&config_dir.join("key"), sdk_key.as_bytes())
+            .expect("write key");
         let creds = sandbox_credentials(shortcode, passkey);
         let profile = Profile {
             name: "personal".into(),
@@ -1591,7 +1593,11 @@ mod tests {
         let home = temp_home();
         let config_dir = home.path().join(".config/daraja");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
-        std::fs::write(config_dir.join("key"), generate_sdk_key("test")).expect("write key");
+        profiles::atomic_write_private(
+            &config_dir.join("key"),
+            generate_sdk_key("test").as_bytes(),
+        )
+        .expect("write key");
         unsafe { std::env::remove_var("DARAJA_KEY") };
 
         let (result, timeout) = resolve_async_urls(None, None).expect("sandbox defaults");
@@ -1605,7 +1611,11 @@ mod tests {
         let home = temp_home();
         let config_dir = home.path().join(".config/daraja");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
-        std::fs::write(config_dir.join("key"), generate_sdk_key("live")).expect("write key");
+        profiles::atomic_write_private(
+            &config_dir.join("key"),
+            generate_sdk_key("live").as_bytes(),
+        )
+        .expect("write key");
         unsafe { std::env::remove_var("DARAJA_KEY") };
 
         let error = resolve_async_urls(None, None).expect_err("production defaults must fail");
@@ -1622,7 +1632,11 @@ mod tests {
         let home = temp_home();
         let config_dir = home.path().join(".config/daraja");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
-        std::fs::write(config_dir.join("key"), generate_sdk_key("test")).expect("write key");
+        profiles::atomic_write_private(
+            &config_dir.join("key"),
+            generate_sdk_key("test").as_bytes(),
+        )
+        .expect("write key");
         unsafe { std::env::remove_var("DARAJA_KEY") };
 
         let error = resolve_callback_url(Some("not-a-url".into()))
@@ -2574,6 +2588,23 @@ async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         },
     });
 
+    if creds_exist {
+        let permissions_ok = profiles::ensure_private_permissions(&creds_path).is_ok();
+        checks.push(CheckItem {
+            ok: permissions_ok,
+            message: if permissions_ok {
+                "Credentials file permissions are private".into()
+            } else {
+                "Credentials file is accessible to other users".into()
+            },
+            hint: if permissions_ok {
+                None
+            } else {
+                Some(format!("Run `chmod 600 {}`.", creds_path.display()))
+            },
+        });
+    }
+
     let daraja_key = load_sdk_key().ok();
     let key_set = daraja_key.is_some();
     let key_from_env = std::env::var("DARAJA_KEY").ok().is_some();
@@ -2595,6 +2626,26 @@ async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
             Some("Run `pesaraja init` to set up.".to_string())
         },
     });
+
+    if !key_from_env {
+        let path = key_path()?;
+        if path.exists() {
+            let permissions_ok = profiles::ensure_private_permissions(&path).is_ok();
+            checks.push(CheckItem {
+                ok: permissions_ok,
+                message: if permissions_ok {
+                    "SDK key file permissions are private".into()
+                } else {
+                    "SDK key file is accessible to other users".into()
+                },
+                hint: if permissions_ok {
+                    None
+                } else {
+                    Some(format!("Run `chmod 600 {}`.", path.display()))
+                },
+            });
+        }
+    }
 
     let is_sandbox = daraja_key
         .as_deref()

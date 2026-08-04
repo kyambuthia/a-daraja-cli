@@ -110,6 +110,7 @@ pub fn save_profile(
 pub fn load_registry() -> Result<ProfileRegistry, DarajaError> {
     let path = profiles_registry_path()?;
     if path.exists() {
+        ensure_private_permissions(&path)?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| DarajaError::Config(format!("failed to read profile registry: {e}")))?;
         return serde_json::from_str(&text)
@@ -136,6 +137,7 @@ pub fn atomic_write_private(path: &Path, contents: &[u8]) -> Result<(), DarajaEr
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| DarajaError::Config(format!("failed to create config directory: {e}")))?;
+        set_private_directory_permissions(parent)?;
     }
 
     let file_name = path
@@ -186,6 +188,40 @@ fn set_private_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
 
 #[cfg(not(unix))]
 fn set_private_permissions(_path: &std::path::Path) -> Result<(), DarajaError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_directory_permissions(path: &std::path::Path) -> Result<(), DarajaError> {
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| DarajaError::Config(format!("failed to read directory metadata: {e}")))?
+        .permissions();
+    perms.set_mode(0o700);
+    std::fs::set_permissions(path, perms)
+        .map_err(|e| DarajaError::Config(format!("failed to set directory permissions: {e}")))
+}
+
+#[cfg(not(unix))]
+fn set_private_directory_permissions(_path: &std::path::Path) -> Result<(), DarajaError> {
+    Ok(())
+}
+
+/// Refuse to read a private configuration file that is accessible to other
+/// users on Unix. This is intentionally a fail-closed check.
+pub fn ensure_private_permissions(path: &Path) -> Result<(), DarajaError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        DarajaError::Config(format!(
+            "read private file metadata at {}: {error}",
+            path.display()
+        ))
+    })?;
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(DarajaError::Config(format!(
+            "private file {} is accessible to other users; set mode 0600",
+            path.display()
+        )));
+    }
     Ok(())
 }
 
@@ -261,10 +297,35 @@ pub fn profile_summary(profile: &Profile) -> serde_json::Value {
 
 pub fn load_profile_credentials(profile: &Profile) -> Result<Credentials, DarajaError> {
     let key_path = legacy_sdk_key_path()?;
-    let sdk_key = std::fs::read_to_string(&key_path)
-        .map_err(|e| DarajaError::Config(format!("failed to read SDK key: {e}")))?;
+    let sdk_key = if let Ok(key) = std::env::var("DARAJA_KEY")
+        && !key.trim().is_empty()
+    {
+        key
+    } else {
+        ensure_private_permissions(&key_path)?;
+        std::fs::read_to_string(&key_path)
+            .map_err(|e| DarajaError::Config(format!("failed to read SDK key: {e}")))?
+    };
     let key_bytes = extract_key_from_sdk_key(sdk_key.trim())?;
+    let key_environment = if sdk_key.trim().starts_with("dsk_test_") {
+        Environment::Sandbox
+    } else {
+        Environment::Production
+    };
+    if key_environment != profile.environment {
+        return Err(DarajaError::WrongEnvironmentPrefix {
+            expected: match profile.environment {
+                Environment::Sandbox => "dsk_test_".into(),
+                Environment::Production => "dsk_live_".into(),
+            },
+            actual: match key_environment {
+                Environment::Sandbox => "dsk_test_".into(),
+                Environment::Production => "dsk_live_".into(),
+            },
+        });
+    }
     let creds_path = PathBuf::from(&profile.credentials_path);
+    ensure_private_permissions(&creds_path)?;
     let encrypted = std::fs::read(&creds_path).map_err(|e| {
         DarajaError::Config(format!(
             "failed to read profile credentials at {}: {e}",
@@ -404,6 +465,19 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn private_permission_check_rejects_group_or_world_access() {
+        let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
+        let home = temp_home();
+        let path = home.path().join(".config/daraja/key");
+        atomic_write_private(&path, b"secret").expect("write private file");
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o644);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        assert!(ensure_private_permissions(&path).is_err());
+    }
+
     #[test]
     fn legacy_files_migrate_to_personal_profile() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
@@ -413,7 +487,7 @@ mod tests {
 
         let sdk_key = generate_sdk_key("test");
         let key_path = config_dir.join("key");
-        std::fs::write(&key_path, &sdk_key).expect("write legacy key");
+        atomic_write_private(&key_path, sdk_key.as_bytes()).expect("write legacy key");
 
         let creds = Credentials {
             consumer_key: Zeroizing::new("ck".into()),
@@ -426,7 +500,8 @@ mod tests {
 
         let key_bytes = daraja_rs::config::extract_key_from_sdk_key(&sdk_key).expect("key bytes");
         let encrypted = encrypt_credentials(&creds, &key_bytes).expect("encrypt creds");
-        std::fs::write(config_dir.join("credentials.enc"), encrypted).expect("write legacy creds");
+        atomic_write_private(&config_dir.join("credentials.enc"), &encrypted)
+            .expect("write legacy creds");
 
         let registry = load_registry().expect("load migrated registry");
         assert_eq!(registry.active_profile, Some("personal".into()));
@@ -445,7 +520,7 @@ mod tests {
         std::fs::create_dir_all(config_dir.join("profiles")).expect("create profile dir");
 
         let sdk_key = generate_sdk_key("test");
-        std::fs::write(config_dir.join("key"), &sdk_key).expect("write key");
+        atomic_write_private(&config_dir.join("key"), sdk_key.as_bytes()).expect("write key");
 
         let creds = Credentials {
             consumer_key: Zeroizing::new("ck".into()),

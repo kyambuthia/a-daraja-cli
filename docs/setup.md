@@ -75,6 +75,12 @@ supported because shell history and process listings can expose them.
 - `profiles.json`: active profile registry metadata.
 - `profiles/personal.enc`: encrypted credentials for the active personal profile.
 - `sandbox.cer`: sandbox API certificate when sandbox setup succeeds.
+- `payments.db`: local payment lifecycle records and immutable event history.
+
+The CLI creates the configuration directory with mode `0700` and private files
+with mode `0600` on Unix. It refuses to load a key or encrypted credential file
+that is accessible to other users. In CI or deployed environments, prefer
+`DARAJA_KEY` from a secret manager instead of copying the local key file.
 
 For production B2C, transaction status, balance, and reversal operations, save the production certificate as:
 
