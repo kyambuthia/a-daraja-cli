@@ -78,8 +78,8 @@ export interface RefundOptions extends IdempotentOptions {
 }
 
 export interface C2bRegisterResponse {
-  OriginatorConversationID: string;
-  ConversationID: string;
+  OriginatorConversationID?: string;
+  ConversationID?: string;
   ResponseDescription: string;
 }
 

@@ -72,6 +72,10 @@ callback body. This is not a Safaricom signature verifier. The Rust SDK also
 provides `CallbackReplayStore` for atomic seven-day claims of callback
 deduplication keys.
 
+C2B registration and simulation conversation identifiers are optional because
+the sandbox can omit `OriginatorConversationID`; callers should treat them as
+diagnostic metadata rather than required payment state.
+
 ## Base URLs
 
 | Environment | URL |

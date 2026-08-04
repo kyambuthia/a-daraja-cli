@@ -1860,10 +1860,15 @@ async fn cmd_simulate(
     } else {
         println!("✓ C2B payment simulated");
         println!();
-        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!(
+            "  Conversation ID:           {}",
+            resp.conversation_id.as_deref().unwrap_or("(not provided)")
+        );
         println!(
             "  Originator Conversation ID: {}",
             resp.originator_conversation_id
+                .as_deref()
+                .unwrap_or("(not provided)")
         );
         println!("  Response Description:      {}", resp.response_description);
         println!();
@@ -2258,10 +2263,15 @@ async fn cmd_register(
     } else {
         println!("✓ C2B URLs registered");
         println!();
-        println!("  Conversation ID:           {}", resp.conversation_id);
+        println!(
+            "  Conversation ID:           {}",
+            resp.conversation_id.as_deref().unwrap_or("(not provided)")
+        );
         println!(
             "  Originator Conversation ID: {}",
             resp.originator_conversation_id
+                .as_deref()
+                .unwrap_or("(not provided)")
         );
         println!("  Response Description:      {}", resp.response_description);
         println!();

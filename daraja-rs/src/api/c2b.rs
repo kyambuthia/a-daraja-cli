@@ -13,10 +13,10 @@ use crate::validation::{
 /// C2B Register URL response.
 #[derive(Debug, serde::Deserialize)]
 pub struct C2bRegisterResponse {
-    #[serde(rename = "OriginatorConversationID")]
-    pub originator_conversation_id: String,
-    #[serde(rename = "ConversationID")]
-    pub conversation_id: String,
+    #[serde(rename = "OriginatorConversationID", default)]
+    pub originator_conversation_id: Option<String>,
+    #[serde(rename = "ConversationID", default)]
+    pub conversation_id: Option<String>,
     #[serde(rename = "ResponseDescription")]
     pub response_description: String,
 }
@@ -95,6 +95,17 @@ mod tests {
         let valid = ["Completed", "Cancelled"];
         assert!(valid.contains(&"Completed"));
         assert!(valid.contains(&"Cancelled"));
+    }
+
+    #[test]
+    fn c2b_response_accepts_provider_omitting_originator_id() {
+        let response: C2bRegisterResponse = serde_json::from_value(serde_json::json!({
+            "ConversationID": "sim-c2b-1",
+            "ResponseDescription": "Success"
+        }))
+        .unwrap();
+        assert_eq!(response.originator_conversation_id, None);
+        assert_eq!(response.conversation_id.as_deref(), Some("sim-c2b-1"));
     }
 
     #[tokio::test]
