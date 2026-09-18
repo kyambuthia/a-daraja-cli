@@ -92,6 +92,15 @@ fn simulator_drives_a_cli_stk_golden_path() {
     let mut lines = BufReader::new(stdout).lines();
     let ready = lines.next().unwrap().unwrap();
     assert!(ready.contains("Local Daraja simulator listening"));
+    // Keep the piped stdout reader alive in the background so the simulator
+    // never sees a closed pipe while printing its remaining startup lines.
+    std::thread::spawn(move || {
+        for next in lines.by_ref() {
+            if next.is_err() {
+                break;
+            }
+        }
+    });
 
     let output = command(directory.path())
         .args([
@@ -129,4 +138,192 @@ fn simulator_drives_a_cli_stk_golden_path() {
     let ledger: serde_json::Value = serde_json::from_slice(&payments.stdout).unwrap();
     assert_eq!(ledger[0]["kind"], "stk");
     assert_eq!(ledger[0]["status"], "pending");
+}
+
+fn setup_sandbox_config(config_dir: &std::path::Path) {
+    let sdk_key = generate_sdk_key("test");
+    let key = extract_key_from_sdk_key(&sdk_key).unwrap();
+    let credentials = Credentials {
+        consumer_key: Zeroizing::new("sim-key".into()),
+        consumer_secret: Zeroizing::new("sim-secret".into()),
+        passkey: Zeroizing::new(
+            "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919".into(),
+        ),
+        shortcode: "174379".into(),
+        initiator_name: None,
+        initiator_password: None,
+    };
+    std::fs::write(config_dir.join("key"), &sdk_key).unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        config_dir.join("key"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    std::fs::write(
+        config_dir.join("credentials.enc"),
+        encrypt_credentials(&credentials, &key).unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        config_dir.join("credentials.enc"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+}
+
+struct Simulator {
+    child: std::process::Child,
+    base_url: String,
+}
+
+impl Simulator {
+    fn start(config_dir: &std::path::Path, scenario: &str) -> Self {
+        let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        drop(reserved);
+        let mut child = command(config_dir)
+            .args([
+                "simulator",
+                "--port",
+                &port.to_string(),
+                "--scenario",
+                scenario,
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let mut lines = BufReader::new(stdout).lines();
+        let ready = lines.next().unwrap().unwrap();
+        assert!(
+            ready.contains("Local Daraja simulator listening"),
+            "simulator ready line: {ready}"
+        );
+        // Drain remaining startup output in the background so the simulator
+        // never blocks or panics on a closed stdout pipe while tests run.
+        std::thread::spawn(move || {
+            for next in lines.by_ref() {
+                if next.is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            child,
+            base_url: format!("http://127.0.0.1:{port}"),
+        }
+    }
+
+    fn base_url(&self) -> &str {
+        &self.base_url
+    }
+}
+
+impl Drop for Simulator {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn ledger_as_json(config_dir: &std::path::Path) -> serde_json::Value {
+    let output = command(config_dir)
+        .args(["--json", "payments", "list"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn simulator_prompt_status_success_reports_simulated_ids_and_leaves_ledger_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    setup_sandbox_config(directory.path());
+    let simulator = Simulator::start(directory.path(), "success");
+
+    let output = command(directory.path())
+        .args([
+            "prompt-status",
+            "--checkout-id",
+            "sim-co-1",
+            "--base-url",
+            simulator.base_url(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Prompt status retrieved"));
+    assert!(stdout.contains("sim-co-1"));
+    assert!(stdout.contains("sim-mr-1"));
+    assert!(stdout.contains("Request accepted"));
+
+    assert_eq!(ledger_as_json(directory.path()), serde_json::json!([]));
+}
+
+#[test]
+fn simulator_prompt_status_failed_reports_simulated_ids_and_leaves_ledger_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    setup_sandbox_config(directory.path());
+    let simulator = Simulator::start(directory.path(), "failed");
+
+    let output = command(directory.path())
+        .args([
+            "--json",
+            "prompt-status",
+            "--checkout-id",
+            "sim-co-1",
+            "--base-url",
+            simulator.base_url(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["checkout_request_id"], "sim-co-1");
+    assert_eq!(body["merchant_request_id"], "sim-mr-1");
+    assert_eq!(body["response_code"], "0");
+    assert_eq!(body["response_description"], "Request accepted");
+
+    assert_eq!(ledger_as_json(directory.path()), serde_json::json!([]));
+}
+
+#[test]
+fn simulator_prompt_status_malformed_fails_closed_and_leaves_ledger_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    setup_sandbox_config(directory.path());
+    let simulator = Simulator::start(directory.path(), "malformed");
+
+    let output = command(directory.path())
+        .args([
+            "--json",
+            "prompt-status",
+            "--checkout-id",
+            "sim-co-1",
+            "--base-url",
+            simulator.base_url(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "network_error");
+    assert_eq!(error["error"]["outcomeUnknown"], false);
+
+    assert_eq!(ledger_as_json(directory.path()), serde_json::json!([]));
 }
