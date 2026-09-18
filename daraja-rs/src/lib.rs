@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod certs;
 pub mod client;
+mod client_idempotency;
 pub mod config;
 pub mod error;
 pub mod idempotency;

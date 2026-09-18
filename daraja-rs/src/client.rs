@@ -7,9 +7,10 @@
 // 4. Refreshes authentication once on a definitive 401 response
 
 use crate::auth::TokenManager;
+use crate::client_idempotency;
 use crate::config::{Credentials, daraja_config_dir};
 use crate::error::DarajaError;
-use crate::idempotency::{AcquireResult, IdempotencyBackend, IdempotencyStore};
+use crate::idempotency::{IdempotencyBackend, IdempotencyStore};
 use crate::types::Environment;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -211,7 +212,9 @@ impl DarajaClient {
             &caller_key,
         );
 
-        if let Some(cached) = self.check_idempotency_cache(&scoped_key, &fingerprint)? {
+        if let Some(cached) =
+            client_idempotency::check_cache(&self.idempotency, &scoped_key, &fingerprint)?
+        {
             return serde_json::from_slice(&cached).map_err(|e| {
                 DarajaError::Network(format!("failed to parse cached response: {e}"))
             });
@@ -224,9 +227,9 @@ impl DarajaClient {
             Ok(response) => response,
             Err(error) => {
                 if error.is_ambiguous_outcome() {
-                    self.save_idempotency_unknown(&scoped_key)?;
+                    client_idempotency::record_unknown(&self.idempotency, &scoped_key)?;
                 } else {
-                    self.save_idempotency_failed(&scoped_key)?;
+                    client_idempotency::record_failed(&self.idempotency, &scoped_key)?;
                 }
                 return Err(error);
             }
@@ -235,7 +238,7 @@ impl DarajaClient {
         let response_bytes = match response.bytes().await {
             Ok(bytes) => bytes,
             Err(error) => {
-                self.save_idempotency_unknown(&scoped_key)?;
+                client_idempotency::record_unknown(&self.idempotency, &scoped_key)?;
                 return Err(DarajaError::RequestOutcomeUnknown(format!(
                     "failed to read provider response: {error}"
                 )));
@@ -244,17 +247,18 @@ impl DarajaClient {
 
         if status.is_success() {
             let parsed = serde_json::from_slice(&response_bytes).map_err(|e| {
-                let persistence_error = self.save_idempotency_unknown(&scoped_key).err();
+                let persistence_error =
+                    client_idempotency::record_unknown(&self.idempotency, &scoped_key).err();
                 persistence_error.unwrap_or_else(|| {
                     DarajaError::RequestOutcomeUnknown(format!(
                         "provider returned an unreadable success response: {e}"
                     ))
                 })
             })?;
-            self.save_idempotency_success(&scoped_key, &response_bytes)?;
+            client_idempotency::record_success(&self.idempotency, &scoped_key, &response_bytes)?;
             Ok(parsed)
         } else {
-            self.save_idempotency_failed(&scoped_key)?;
+            client_idempotency::record_failed(&self.idempotency, &scoped_key)?;
             let body = String::from_utf8_lossy(&response_bytes);
             Err(api_error(status, &body))
         }
@@ -274,68 +278,6 @@ impl DarajaClient {
             .map_err(|e| DarajaError::Network(format!("serialize failed: {}", e)))?;
         let response = self.send_post(&url, &body_bytes, None, false).await?;
         Self::handle_response(response).await
-    }
-
-    fn check_idempotency_cache(
-        &self,
-        scoped_key: &str,
-        fingerprint: &str,
-    ) -> Result<Option<Vec<u8>>, DarajaError> {
-        let Some(store) = &self.idempotency else {
-            return Ok(None);
-        };
-
-        let mut store = store
-            .lock()
-            .map_err(|_| DarajaError::Config("idempotency store lock poisoned".into()))?;
-        let result = store
-            .acquire(scoped_key, fingerprint)
-            .map_err(|e| DarajaError::Config(format!("failed to reserve idempotency key: {e}")))?;
-
-        match result {
-            AcquireResult::Acquired => Ok(None),
-            AcquireResult::Success(response) => Ok(Some(response)),
-            AcquireResult::Pending => Err(DarajaError::IdempotencyConflict),
-            AcquireResult::FingerprintMismatch => Err(DarajaError::IdempotencyKeyReused),
-            AcquireResult::Failed => Err(DarajaError::IdempotencyPreviousFailed),
-            AcquireResult::Unknown => Err(DarajaError::IdempotencyOutcomeUnknown),
-        }
-    }
-
-    fn save_idempotency_success(&self, key: &str, response: &[u8]) -> Result<(), DarajaError> {
-        let Some(store) = &self.idempotency else {
-            return Ok(());
-        };
-        let mut store = store.lock().map_err(|_| {
-            DarajaError::LocalStateUncertain("idempotency store lock poisoned".into())
-        })?;
-        store.save_success(key, response).map_err(|error| {
-            DarajaError::LocalStateUncertain(format!("save successful response: {error}"))
-        })
-    }
-
-    fn save_idempotency_failed(&self, key: &str) -> Result<(), DarajaError> {
-        let Some(store) = &self.idempotency else {
-            return Ok(());
-        };
-        let mut store = store.lock().map_err(|_| {
-            DarajaError::LocalStateUncertain("idempotency store lock poisoned".into())
-        })?;
-        store.save_failed(key).map_err(|error| {
-            DarajaError::LocalStateUncertain(format!("save definitive failure: {error}"))
-        })
-    }
-
-    fn save_idempotency_unknown(&self, key: &str) -> Result<(), DarajaError> {
-        let Some(store) = &self.idempotency else {
-            return Ok(());
-        };
-        let mut store = store.lock().map_err(|_| {
-            DarajaError::LocalStateUncertain("idempotency store lock poisoned".into())
-        })?;
-        store.save_unknown(key).map_err(|error| {
-            DarajaError::LocalStateUncertain(format!("save ambiguous outcome: {error}"))
-        })
     }
 
     async fn send_post(
@@ -607,6 +549,7 @@ mod tests {
     mod async_tests {
         use super::*;
         use crate::config::Credentials;
+        use crate::idempotency::{AcquireResult, IdempotencyBackend};
         use crate::types::Environment;
         use serde::Deserialize;
         use wiremock::matchers::{header, method, path};
