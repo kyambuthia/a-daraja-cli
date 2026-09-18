@@ -937,10 +937,7 @@ mod tests {
             migrated.idempotency_key.as_deref(),
             Some("legacy:LEGACY-ORDER-1:stk")
         );
-        assert_eq!(
-            migrated.merchant_request_id.as_deref(),
-            Some("mr-legacy-1")
-        );
+        assert_eq!(migrated.merchant_request_id.as_deref(), Some("mr-legacy-1"));
         assert_eq!(
             migrated.checkout_request_id.as_deref(),
             Some("ws_CO_legacy_1")
@@ -967,7 +964,11 @@ mod tests {
             "legacy_stk_001"
         );
         let pending = store
-            .transition("legacy_stk_001", PaymentStatus::Pending, Some("callback waiting"))
+            .transition(
+                "legacy_stk_001",
+                PaymentStatus::Pending,
+                Some("callback waiting"),
+            )
             .unwrap();
         assert_eq!(pending.status, PaymentStatus::Pending);
         assert_eq!(store.events("legacy_stk_001").unwrap().len(), 3);
@@ -994,7 +995,10 @@ mod tests {
         let reopened = store.get("legacy_stk_001").unwrap().unwrap();
         assert_eq!(reopened.status, PaymentStatus::Pending);
         assert_eq!(reopened.kind, PaymentKind::Stk);
-        assert_eq!(reopened.checkout_request_id.as_deref(), Some("ws_CO_legacy_1"));
+        assert_eq!(
+            reopened.checkout_request_id.as_deref(),
+            Some("ws_CO_legacy_1")
+        );
         assert_eq!(store.events("legacy_stk_001").unwrap().len(), 3);
     }
 
@@ -1105,7 +1109,10 @@ mod tests {
         let events = store.events("b2c_after_migrate_001").unwrap();
         assert_eq!(events.len(), 4);
         assert_eq!(
-            events.iter().map(|event| event.to.as_str()).collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.to.as_str())
+                .collect::<Vec<_>>(),
             vec!["created", "submitted", "pending", "succeeded"]
         );
         drop(store);
@@ -1193,7 +1200,10 @@ mod tests {
         let events = store.events("rev_after_migrate_001").unwrap();
         assert_eq!(events.len(), 4);
         assert_eq!(
-            events.iter().map(|event| event.to.as_str()).collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.to.as_str())
+                .collect::<Vec<_>>(),
             vec!["created", "submitted", "succeeded", "reversed"]
         );
         drop(store);

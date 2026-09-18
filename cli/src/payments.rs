@@ -71,10 +71,7 @@ pub async fn run(command: PaymentCommands, json: bool) -> Result<(), DarajaError
                 println!(
                     "  {:<27}  {}",
                     "Originator Conversation ID:",
-                    payment
-                        .originator_conversation_id
-                        .as_deref()
-                        .unwrap_or("—")
+                    payment.originator_conversation_id.as_deref().unwrap_or("—")
                 );
                 println!(
                     "  {:<27}  {}",

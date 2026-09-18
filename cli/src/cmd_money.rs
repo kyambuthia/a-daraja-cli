@@ -320,14 +320,7 @@ pub(crate) async fn cmd_refund(
     idempotency_key: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
-    let mapped = map_reversal_args(
-        &id,
-        amount,
-        &receiver,
-        &receiver_type,
-        &remarks,
-        &occasion,
-    )?;
+    let mapped = map_reversal_args(&id, amount, &receiver, &receiver_type, &remarks, &occasion)?;
     let id = mapped.transaction_id;
     let amount = mapped.amount_kes;
     let receiver = mapped.receiver;
