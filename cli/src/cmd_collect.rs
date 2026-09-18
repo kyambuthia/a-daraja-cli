@@ -1,3 +1,4 @@
+use crate::money_mappings::map_stk_push_args;
 use crate::prelude::*;
 
 #[allow(clippy::too_many_arguments)] // Mirrors the user-facing Clap command fields.
@@ -14,10 +15,12 @@ pub(crate) async fn cmd_prompt(
     base_url: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
-    let amount = parse_kes_amount(&amount)?;
-    let phone = validate_phone(&phone)?;
-    validate_required_text("description", &description, 100)?;
-    validate_required_text("account reference", &reference, 100)?;
+    let mapped = map_stk_push_args(&phone, &amount, &description, &reference, payment_type)?;
+    let amount = mapped.amount_kes;
+    let phone = mapped.phone;
+    let description = mapped.description;
+    let reference = mapped.reference;
+    let transaction_type = mapped.transaction_type;
 
     let callback = resolve_callback_url(callback_url)?;
     let base_url = base_url
@@ -100,7 +103,6 @@ pub(crate) async fn cmd_prompt(
         Some("STK request submitted"),
     )?;
 
-    let transaction_type = payment_type.to_stk_transaction_type();
     let resp = stk_push_with_type_and_idempotency_key(
         daraja.client(),
         &phone,

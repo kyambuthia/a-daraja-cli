@@ -1,3 +1,4 @@
+use crate::money_mappings::{map_b2c_args, map_reversal_args};
 use crate::prelude::*;
 
 pub(crate) async fn cmd_simulate(
@@ -75,10 +76,12 @@ pub(crate) async fn cmd_send(
     idempotency_key: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
-    let amount = parse_kes_amount(&amount)?;
-    let phone = validate_phone(&to)?;
-    validate_required_text("remarks", &remarks, 100)?;
-    validate_optional_text("occasion", &occasion, 100)?;
+    let mapped = map_b2c_args(&to, &amount, &remarks, &occasion, payment_type)?;
+    let amount = mapped.amount_kes;
+    let phone = mapped.phone;
+    let remarks = mapped.remarks;
+    let occasion = mapped.occasion;
+    let command = mapped.command;
     let (result_url, timeout_url) = resolve_async_urls(result_url, timeout_url)?;
 
     if dry_run {
@@ -147,7 +150,6 @@ pub(crate) async fn cmd_send(
         Some("B2C request submitted"),
     )?;
 
-    let command = payment_type.to_b2c_command();
     let resp = match b2c_payment_with_idempotency_key(
         daraja.client(),
         &phone,
@@ -318,11 +320,20 @@ pub(crate) async fn cmd_refund(
     idempotency_key: Option<String>,
     json: bool,
 ) -> Result<(), DarajaError> {
-    validate_required_text("transaction ID", &id, 128)?;
-    validate_merchant_shortcode(&receiver)?;
-    validate_required_text("receiver identifier type", &receiver_type, 8)?;
-    validate_required_text("remarks", &remarks, 100)?;
-    validate_optional_text("occasion", &occasion, 100)?;
+    let mapped = map_reversal_args(
+        &id,
+        amount,
+        &receiver,
+        &receiver_type,
+        &remarks,
+        &occasion,
+    )?;
+    let id = mapped.transaction_id;
+    let amount = mapped.amount_kes;
+    let receiver = mapped.receiver;
+    let receiver_type = mapped.receiver_type;
+    let remarks = mapped.remarks;
+    let occasion = mapped.occasion;
     let (result_url, timeout_url) = resolve_async_urls(result_url, timeout_url)?;
     if dry_run {
         if configured_environment()? == Environment::Production && idempotency_key.is_none() {

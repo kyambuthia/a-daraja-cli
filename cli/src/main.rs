@@ -9,6 +9,7 @@ mod creds;
 mod input;
 #[cfg(test)]
 mod legacy_tests;
+mod money_mappings;
 mod output;
 mod payments;
 mod prelude;
