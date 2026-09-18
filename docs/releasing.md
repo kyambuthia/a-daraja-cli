@@ -3,6 +3,21 @@
 Releases are created from version tags after the repository is clean and the
 full local verification suite passes.
 
+## Preflight
+
+Check an existing `vX.Y.Z` tag before releasing. The script never creates
+tags or publishes anything:
+
+```bash
+scripts/release-preflight.sh v0.1.0
+scripts/release-preflight.sh --verify v0.1.0
+```
+
+It rejects a dirty checkout, requires `daraja-rs`, `cli`, and
+`@pesaraja/sdk` versions to equal the tag, and requires the tag to resolve
+to `HEAD`. With `--verify`, it also runs the verification commands below
+using locked/package options.
+
 ## Prepare
 
 1. Update the version in `daraja-rs/Cargo.toml`, `cli/Cargo.toml`, and
@@ -60,6 +75,7 @@ npm run lint:package -w @pesaraja/sdk
 npm pack -w @pesaraja/sdk --dry-run
 npm audit --omit=dev --audit-level=high
 sh -n install.sh
+sh -n scripts/release-preflight.sh
 ```
 
 Never use live Daraja credentials or perform live money-moving operations as
