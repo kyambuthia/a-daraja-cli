@@ -54,8 +54,37 @@ pub async fn run(command: PaymentCommands, json: bool) -> Result<(), DarajaError
                 );
                 println!("  Reference:    {}", payment.reference);
                 println!(
-                    "  Checkout ID:  {}",
+                    "  {:<27}  {}",
+                    "Merchant Request ID:",
+                    payment.merchant_request_id.as_deref().unwrap_or("—")
+                );
+                println!(
+                    "  {:<27}  {}",
+                    "Checkout Request ID:",
                     payment.checkout_request_id.as_deref().unwrap_or("—")
+                );
+                println!(
+                    "  {:<27}  {}",
+                    "Conversation ID:",
+                    payment.conversation_id.as_deref().unwrap_or("—")
+                );
+                println!(
+                    "  {:<27}  {}",
+                    "Originator Conversation ID:",
+                    payment
+                        .originator_conversation_id
+                        .as_deref()
+                        .unwrap_or("—")
+                );
+                println!(
+                    "  {:<27}  {}",
+                    "Transaction ID:",
+                    payment.transaction_id.as_deref().unwrap_or("—")
+                );
+                println!(
+                    "  {:<27}  {}",
+                    "Receipt Number:",
+                    payment.receipt_number.as_deref().unwrap_or("—")
                 );
                 println!("  Events:");
                 for event in events {

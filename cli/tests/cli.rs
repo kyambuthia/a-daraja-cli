@@ -329,6 +329,58 @@ fn simulator_prompt_status_malformed_fails_closed_and_leaves_ledger_empty() {
 }
 
 #[test]
+fn payments_inspect_displays_b2c_conversation_ids() {
+    use daraja_rs::payments::{NewPayment, PaymentKind, PaymentStore};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = PaymentStore::new(directory.path().join("payments.db")).unwrap();
+    store
+        .create(&NewPayment {
+            id: "b2c-inspect-1".into(),
+            kind: PaymentKind::B2c,
+            environment: "sandbox".into(),
+            shortcode: "600000".into(),
+            amount_kes: 100,
+            phone: Some("254712345678".into()),
+            reference: "Test".into(),
+            idempotency_key: Some("test:inspect:b2c:1".into()),
+        })
+        .unwrap();
+    store
+        .attach_conversation_ids(
+            "b2c-inspect-1",
+            Some("AG_20240101_123"),
+            Some("OC_20240101_456"),
+        )
+        .unwrap();
+    drop(store);
+
+    let output = command(directory.path())
+        .args(["payments", "inspect", "--id", "b2c-inspect-1"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("AG_20240101_123"), "{stdout}");
+    assert!(stdout.contains("OC_20240101_456"), "{stdout}");
+    for label in [
+        "Merchant Request ID:",
+        "Checkout Request ID:",
+        "Conversation ID:",
+        "Originator Conversation ID:",
+        "Transaction ID:",
+        "Receipt Number:",
+    ] {
+        assert!(stdout.contains(label), "missing {label} in:\n{stdout}");
+    }
+    assert!(stdout.contains("—"), "{stdout}");
+}
+
+#[test]
 fn reconcile_rejects_b2c_and_reversal_records_without_credentials() {
     use daraja_rs::payments::{NewPayment, PaymentKind, PaymentStore};
 
