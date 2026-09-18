@@ -728,4 +728,495 @@ mod tests {
             "pay_001"
         );
     }
+
+    fn legacy_column_names(conn: &rusqlite::Connection) -> Vec<String> {
+        let mut statement = conn.prepare("PRAGMA table_info(payments)").unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|value| value.unwrap())
+            .collect()
+    }
+
+    fn create_legacy_db_without_kind_or_conversation_ids(path: &std::path::Path) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000;
+             CREATE TABLE payments (
+                id TEXT PRIMARY KEY,
+                environment TEXT NOT NULL,
+                shortcode TEXT NOT NULL,
+                amount_kes INTEGER NOT NULL CHECK (amount_kes > 0),
+                phone TEXT,
+                reference TEXT NOT NULL,
+                idempotency_key TEXT UNIQUE,
+                merchant_request_id TEXT,
+                checkout_request_id TEXT,
+                transaction_id TEXT,
+                receipt_number TEXT,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+             );
+             CREATE INDEX payments_status_idx ON payments(status);
+             CREATE INDEX payments_checkout_idx ON payments(checkout_request_id);
+             CREATE TABLE payment_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payment_id TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                detail TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(payment_id) REFERENCES payments(id)
+             );
+             CREATE INDEX payment_events_payment_idx
+                ON payment_events(payment_id, id);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO payments (
+                id, environment, shortcode, amount_kes, phone, reference,
+                idempotency_key, merchant_request_id, checkout_request_id,
+                transaction_id, receipt_number, status, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            rusqlite::params![
+                "legacy_stk_001",
+                "sandbox",
+                "174379",
+                500_i64,
+                "254712345678",
+                "LEGACY-ORDER-1",
+                "legacy:LEGACY-ORDER-1:stk",
+                "mr-legacy-1",
+                "ws_CO_legacy_1",
+                Option::<String>::None,
+                Option::<String>::None,
+                "submitted",
+                1_700_000_000_i64,
+                1_700_000_060_i64,
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO payment_events
+                (payment_id, from_status, to_status, detail, created_at)
+             VALUES (?1, NULL, ?2, ?3, ?4)",
+            rusqlite::params![
+                "legacy_stk_001",
+                "created",
+                "payment created",
+                1_700_000_000_i64,
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO payment_events
+                (payment_id, from_status, to_status, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "legacy_stk_001",
+                "created",
+                "submitted",
+                "STK request accepted",
+                1_700_000_060_i64,
+            ],
+        )
+        .unwrap();
+    }
+
+    fn create_legacy_db_with_kind_without_conversation_ids(path: &std::path::Path) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000;
+             CREATE TABLE payments (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'stk',
+                environment TEXT NOT NULL,
+                shortcode TEXT NOT NULL,
+                amount_kes INTEGER NOT NULL CHECK (amount_kes > 0),
+                phone TEXT,
+                reference TEXT NOT NULL,
+                idempotency_key TEXT UNIQUE,
+                merchant_request_id TEXT,
+                checkout_request_id TEXT,
+                transaction_id TEXT,
+                receipt_number TEXT,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+             );
+             CREATE INDEX payments_status_idx ON payments(status);
+             CREATE INDEX payments_checkout_idx ON payments(checkout_request_id);
+             CREATE TABLE payment_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payment_id TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                detail TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(payment_id) REFERENCES payments(id)
+             );
+             CREATE INDEX payment_events_payment_idx
+                ON payment_events(payment_id, id);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO payments (
+                id, kind, environment, shortcode, amount_kes, phone, reference,
+                idempotency_key, merchant_request_id, checkout_request_id,
+                transaction_id, receipt_number, status, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            rusqlite::params![
+                "legacy_b2c_001",
+                "b2c",
+                "sandbox",
+                "600000",
+                1_000_i64,
+                "254722000001",
+                "B2C-LEGACY-1",
+                "legacy:B2C-LEGACY-1:b2c",
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                "submitted",
+                1_700_000_100_i64,
+                1_700_000_160_i64,
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO payment_events
+                (payment_id, from_status, to_status, detail, created_at)
+             VALUES (?1, NULL, ?2, ?3, ?4)",
+            rusqlite::params![
+                "legacy_b2c_001",
+                "created",
+                "payment created",
+                1_700_000_100_i64,
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO payment_events
+                (payment_id, from_status, to_status, detail, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "legacy_b2c_001",
+                "created",
+                "submitted",
+                "B2C request accepted",
+                1_700_000_160_i64,
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn legacy_schema_without_kind_and_conversation_ids_upgrades_without_data_loss() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("payments.db");
+        create_legacy_db_without_kind_or_conversation_ids(&path);
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let columns = legacy_column_names(&conn);
+            assert!(!columns.contains(&"kind".to_string()));
+            assert!(!columns.contains(&"conversation_id".to_string()));
+            assert!(!columns.contains(&"originator_conversation_id".to_string()));
+        }
+        let mut store = PaymentStore::new(&path).unwrap();
+        let migrated = store.get("legacy_stk_001").unwrap().unwrap();
+        assert_eq!(migrated.id, "legacy_stk_001");
+        assert_eq!(migrated.kind, PaymentKind::Stk);
+        assert_eq!(migrated.environment, "sandbox");
+        assert_eq!(migrated.shortcode, "174379");
+        assert_eq!(migrated.amount_kes, 500);
+        assert_eq!(migrated.phone.as_deref(), Some("254712345678"));
+        assert_eq!(migrated.reference, "LEGACY-ORDER-1");
+        assert_eq!(
+            migrated.idempotency_key.as_deref(),
+            Some("legacy:LEGACY-ORDER-1:stk")
+        );
+        assert_eq!(
+            migrated.merchant_request_id.as_deref(),
+            Some("mr-legacy-1")
+        );
+        assert_eq!(
+            migrated.checkout_request_id.as_deref(),
+            Some("ws_CO_legacy_1")
+        );
+        assert_eq!(migrated.conversation_id, None);
+        assert_eq!(migrated.originator_conversation_id, None);
+        assert_eq!(migrated.transaction_id, None);
+        assert_eq!(migrated.receipt_number, None);
+        assert_eq!(migrated.status, PaymentStatus::Submitted);
+        assert_eq!(migrated.created_at, 1_700_000_000);
+        assert_eq!(migrated.updated_at, 1_700_000_060);
+        let events = store.events("legacy_stk_001").unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].from, None);
+        assert_eq!(events[0].to, "created");
+        assert_eq!(events[1].from.as_deref(), Some("created"));
+        assert_eq!(events[1].to, "submitted");
+        assert_eq!(
+            store
+                .get_by_idempotency_key("legacy:LEGACY-ORDER-1:stk")
+                .unwrap()
+                .unwrap()
+                .id,
+            "legacy_stk_001"
+        );
+        let pending = store
+            .transition("legacy_stk_001", PaymentStatus::Pending, Some("callback waiting"))
+            .unwrap();
+        assert_eq!(pending.status, PaymentStatus::Pending);
+        assert_eq!(store.events("legacy_stk_001").unwrap().len(), 3);
+        let rejected = store
+            .transition("legacy_stk_001", PaymentStatus::Created, None)
+            .unwrap_err();
+        assert!(matches!(
+            rejected,
+            DarajaError::InvalidPaymentTransition { .. }
+        ));
+        assert_eq!(
+            store.get("legacy_stk_001").unwrap().unwrap().status,
+            PaymentStatus::Pending
+        );
+        drop(store);
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let columns = legacy_column_names(&conn);
+            assert!(columns.contains(&"kind".to_string()));
+            assert!(columns.contains(&"conversation_id".to_string()));
+            assert!(columns.contains(&"originator_conversation_id".to_string()));
+        }
+        let store = PaymentStore::new(&path).unwrap();
+        let reopened = store.get("legacy_stk_001").unwrap().unwrap();
+        assert_eq!(reopened.status, PaymentStatus::Pending);
+        assert_eq!(reopened.kind, PaymentKind::Stk);
+        assert_eq!(reopened.checkout_request_id.as_deref(), Some("ws_CO_legacy_1"));
+        assert_eq!(store.events("legacy_stk_001").unwrap().len(), 3);
+    }
+
+    #[test]
+    fn legacy_schema_with_kind_but_without_conversation_ids_upgrades_preserving_kind() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("payments.db");
+        create_legacy_db_with_kind_without_conversation_ids(&path);
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let columns = legacy_column_names(&conn);
+            assert!(columns.contains(&"kind".to_string()));
+            assert!(!columns.contains(&"conversation_id".to_string()));
+            assert!(!columns.contains(&"originator_conversation_id".to_string()));
+        }
+        let mut store = PaymentStore::new(&path).unwrap();
+        let migrated = store.get("legacy_b2c_001").unwrap().unwrap();
+        assert_eq!(migrated.kind, PaymentKind::B2c);
+        assert_eq!(migrated.environment, "sandbox");
+        assert_eq!(migrated.shortcode, "600000");
+        assert_eq!(migrated.amount_kes, 1_000);
+        assert_eq!(migrated.status, PaymentStatus::Submitted);
+        assert_eq!(migrated.conversation_id, None);
+        assert_eq!(migrated.originator_conversation_id, None);
+        assert_eq!(migrated.created_at, 1_700_000_100);
+        assert_eq!(migrated.updated_at, 1_700_000_160);
+        assert_eq!(store.events("legacy_b2c_001").unwrap().len(), 2);
+        let attached = store
+            .attach_conversation_ids(
+                "legacy_b2c_001",
+                Some("AG_20240101_0001AbCd"),
+                Some("26702-12345678-1"),
+            )
+            .unwrap();
+        assert_eq!(
+            attached.conversation_id.as_deref(),
+            Some("AG_20240101_0001AbCd")
+        );
+        assert_eq!(
+            attached.originator_conversation_id.as_deref(),
+            Some("26702-12345678-1")
+        );
+        drop(store);
+        let store = PaymentStore::new(&path).unwrap();
+        let reloaded = store.get("legacy_b2c_001").unwrap().unwrap();
+        assert_eq!(reloaded.kind, PaymentKind::B2c);
+        assert_eq!(
+            reloaded.conversation_id.as_deref(),
+            Some("AG_20240101_0001AbCd")
+        );
+        assert_eq!(
+            reloaded.originator_conversation_id.as_deref(),
+            Some("26702-12345678-1")
+        );
+        assert_eq!(store.events("legacy_b2c_001").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn migrated_store_persists_b2c_conversation_ids_and_guarded_events_across_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("payments.db");
+        create_legacy_db_without_kind_or_conversation_ids(&path);
+        let mut store = PaymentStore::new(&path).unwrap();
+        let input = NewPayment {
+            id: "b2c_after_migrate_001".into(),
+            kind: PaymentKind::B2c,
+            environment: "sandbox".into(),
+            shortcode: "600000".into(),
+            amount_kes: 1_000,
+            phone: Some("254722000001".into()),
+            reference: "B2C-AFTER-MIGRATE-1".into(),
+            idempotency_key: Some("b2c:B2C-AFTER-MIGRATE-1".into()),
+        };
+        store.create(&input).unwrap();
+        store
+            .attach_conversation_ids(
+                "b2c_after_migrate_001",
+                Some("AG_20240101_0001AbCd"),
+                Some("26702-12345678-1"),
+            )
+            .unwrap();
+        store
+            .transition(
+                "b2c_after_migrate_001",
+                PaymentStatus::Submitted,
+                Some("B2C request accepted"),
+            )
+            .unwrap();
+        store
+            .transition("b2c_after_migrate_001", PaymentStatus::Pending, None)
+            .unwrap();
+        let succeeded = store
+            .transition(
+                "b2c_after_migrate_001",
+                PaymentStatus::Succeeded,
+                Some("result matched"),
+            )
+            .unwrap();
+        assert_eq!(succeeded.kind, PaymentKind::B2c);
+        assert_eq!(
+            succeeded.conversation_id.as_deref(),
+            Some("AG_20240101_0001AbCd")
+        );
+        assert_eq!(
+            succeeded.originator_conversation_id.as_deref(),
+            Some("26702-12345678-1")
+        );
+        let events = store.events("b2c_after_migrate_001").unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events.iter().map(|event| event.to.as_str()).collect::<Vec<_>>(),
+            vec!["created", "submitted", "pending", "succeeded"]
+        );
+        drop(store);
+        let mut store = PaymentStore::new(&path).unwrap();
+        let reloaded = store.get("b2c_after_migrate_001").unwrap().unwrap();
+        assert_eq!(reloaded.kind, PaymentKind::B2c);
+        assert_eq!(reloaded.status, PaymentStatus::Succeeded);
+        assert_eq!(
+            reloaded.conversation_id.as_deref(),
+            Some("AG_20240101_0001AbCd")
+        );
+        assert_eq!(
+            reloaded.originator_conversation_id.as_deref(),
+            Some("26702-12345678-1")
+        );
+        assert_eq!(store.events("b2c_after_migrate_001").unwrap().len(), 4);
+        assert_eq!(
+            store.get("legacy_stk_001").unwrap().unwrap().kind,
+            PaymentKind::Stk
+        );
+        let rejected = store
+            .transition("b2c_after_migrate_001", PaymentStatus::Submitted, None)
+            .unwrap_err();
+        assert!(matches!(
+            rejected,
+            DarajaError::InvalidPaymentTransition { .. }
+        ));
+        assert_eq!(store.events("b2c_after_migrate_001").unwrap().len(), 4);
+    }
+
+    #[test]
+    fn migrated_store_persists_reversal_conversation_ids_and_guarded_events_across_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("payments.db");
+        create_legacy_db_without_kind_or_conversation_ids(&path);
+        let mut store = PaymentStore::new(&path).unwrap();
+        let input = NewPayment {
+            id: "rev_after_migrate_001".into(),
+            kind: PaymentKind::Reversal,
+            environment: "sandbox".into(),
+            shortcode: "174379".into(),
+            amount_kes: 500,
+            phone: None,
+            reference: "REV-AFTER-MIGRATE-1".into(),
+            idempotency_key: Some("reversal:REV-AFTER-MIGRATE-1".into()),
+        };
+        store.create(&input).unwrap();
+        store
+            .attach_conversation_ids(
+                "rev_after_migrate_001",
+                Some("AG_20240102_0002EfGh"),
+                Some("26702-87654321-1"),
+            )
+            .unwrap();
+        store
+            .transition(
+                "rev_after_migrate_001",
+                PaymentStatus::Submitted,
+                Some("reversal request accepted"),
+            )
+            .unwrap();
+        store
+            .transition(
+                "rev_after_migrate_001",
+                PaymentStatus::Succeeded,
+                Some("reversal accepted"),
+            )
+            .unwrap();
+        let reversed = store
+            .transition(
+                "rev_after_migrate_001",
+                PaymentStatus::Reversed,
+                Some("original transaction reversed"),
+            )
+            .unwrap();
+        assert_eq!(reversed.kind, PaymentKind::Reversal);
+        assert_eq!(
+            reversed.conversation_id.as_deref(),
+            Some("AG_20240102_0002EfGh")
+        );
+        assert_eq!(
+            reversed.originator_conversation_id.as_deref(),
+            Some("26702-87654321-1")
+        );
+        let events = store.events("rev_after_migrate_001").unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events.iter().map(|event| event.to.as_str()).collect::<Vec<_>>(),
+            vec!["created", "submitted", "succeeded", "reversed"]
+        );
+        drop(store);
+        let mut store = PaymentStore::new(&path).unwrap();
+        let reloaded = store.get("rev_after_migrate_001").unwrap().unwrap();
+        assert_eq!(reloaded.kind, PaymentKind::Reversal);
+        assert_eq!(reloaded.status, PaymentStatus::Reversed);
+        assert_eq!(
+            reloaded.conversation_id.as_deref(),
+            Some("AG_20240102_0002EfGh")
+        );
+        assert_eq!(
+            reloaded.originator_conversation_id.as_deref(),
+            Some("26702-87654321-1")
+        );
+        assert_eq!(store.events("rev_after_migrate_001").unwrap().len(), 4);
+        let rejected = store
+            .transition("rev_after_migrate_001", PaymentStatus::Succeeded, None)
+            .unwrap_err();
+        assert!(matches!(
+            rejected,
+            DarajaError::InvalidPaymentTransition { .. }
+        ));
+        assert_eq!(store.events("rev_after_migrate_001").unwrap().len(), 4);
+    }
 }
