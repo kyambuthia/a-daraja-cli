@@ -89,7 +89,8 @@ impl IdempotencyStore {
         let cutoff = now - TTL_SECS;
         let tx = self.conn.transaction()?;
         tx.execute(
-            "DELETE FROM idempotency WHERE created_at < ?1",
+            "DELETE FROM idempotency
+             WHERE created_at < ?1 AND status IN ('success', 'failed')",
             params![cutoff],
         )?;
         let inserted = tx.execute(
@@ -172,11 +173,15 @@ impl IdempotencyStore {
         }))
     }
 
-    /// Delete entries older than 24 hours.
+    /// Delete terminal entries older than 24 hours.
+    ///
+    /// Pending and unknown outcomes are retained until an application resolves
+    /// them; expiring either state could permit an unsafe duplicate request.
     pub fn cleanup_expired(&self) -> Result<(), rusqlite::Error> {
         let cutoff = unix_now() - TTL_SECS;
         self.conn.execute(
-            "DELETE FROM idempotency WHERE created_at < ?1",
+            "DELETE FROM idempotency
+             WHERE created_at < ?1 AND status IN ('success', 'failed')",
             params![cutoff],
         )?;
         Ok(())
@@ -287,5 +292,24 @@ mod tests {
             .unwrap();
         store.cleanup_expired().unwrap();
         assert_eq!(store.get_status("expired").unwrap(), None);
+    }
+
+    #[test]
+    fn cleanup_preserves_old_unknown_and_pending_entries() {
+        let (_dir, store) = temp_store();
+        for (key, status) in [("unknown", "unknown"), ("pending", "pending")] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO idempotency
+                        (key, fingerprint, status, response, created_at)
+                     VALUES (?1, 'fp', ?2, NULL, ?3)",
+                    params![key, status, unix_now() - TTL_SECS - 1],
+                )
+                .unwrap();
+        }
+        store.cleanup_expired().unwrap();
+        assert_eq!(store.get_status("unknown").unwrap(), Some(Status::Unknown));
+        assert_eq!(store.get_status("pending").unwrap(), Some(Status::Pending));
     }
 }

@@ -8,25 +8,36 @@ interface Token {
 }
 
 export class TokenManager {
-  private cached: Token | null = null;
+  #cached: Token | null = null;
+  readonly #consumerKey: string;
+  readonly #consumerSecret: string;
+  readonly #environment: Environment;
+  readonly #baseUrlOverride?: string;
+  readonly #requestTimeoutMs: number;
 
   constructor(
-    private readonly consumerKey: string,
-    private readonly consumerSecret: string,
-    private readonly environment: Environment,
-    private readonly baseUrlOverride?: string,
-    private readonly requestTimeoutMs: number = 30_000
-  ) {}
+    consumerKey: string,
+    consumerSecret: string,
+    environment: Environment,
+    baseUrlOverride?: string,
+    requestTimeoutMs: number = 30_000
+  ) {
+    this.#consumerKey = consumerKey;
+    this.#consumerSecret = consumerSecret;
+    this.#environment = environment;
+    this.#baseUrlOverride = baseUrlOverride;
+    this.#requestTimeoutMs = requestTimeoutMs;
+  }
 
   async getToken(): Promise<string> {
-    if (this.cached && Date.now() < this.cached.expiresAt) {
-      return this.cached.accessToken;
+    if (this.#cached && Date.now() < this.#cached.expiresAt) {
+      return this.#cached.accessToken;
     }
 
-    const baseUrl = this.baseUrlOverride ?? environmentBaseUrl(this.environment);
+    const baseUrl = this.#baseUrlOverride ?? environmentBaseUrl(this.#environment);
     const url = `${baseUrl}/oauth/v1/generate?grant_type=client_credentials`;
     const basic = Buffer.from(
-      `${this.consumerKey}:${this.consumerSecret}`
+      `${this.#consumerKey}:${this.#consumerSecret}`
     ).toString("base64");
 
     let response: Response | undefined;
@@ -34,7 +45,7 @@ export class TokenManager {
       try {
         response = await fetch(url, {
           headers: { Authorization: `Basic ${basic}` },
-          signal: AbortSignal.timeout(this.requestTimeoutMs),
+          signal: AbortSignal.timeout(this.#requestTimeoutMs),
         });
       } catch (error) {
         if (attempt < 2) {
@@ -70,15 +81,15 @@ export class TokenManager {
       throw new DarajaError(`Authentication failed: invalid expires_in '${data.expires_in}'`);
     }
 
-    this.cached = {
+    this.#cached = {
       accessToken: data.access_token,
       expiresAt: Date.now() + Math.max(0, expiresIn - 30) * 1000,
     };
 
-    return this.cached.accessToken;
+    return this.#cached.accessToken;
   }
 
   invalidate(): void {
-    this.cached = null;
+    this.#cached = null;
   }
 }

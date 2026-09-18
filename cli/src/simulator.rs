@@ -42,6 +42,9 @@ pub async fn run(port: u16, scenario: Scenario) -> Result<(), DarajaError> {
     let listener = TcpListener::bind(address)
         .await
         .map_err(|error| DarajaError::Config(format!("bind simulator on {address}: {error}")))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| DarajaError::Config(format!("read simulator address: {error}")))?;
 
     println!("✓ Local Daraja simulator listening on http://{address}");
     println!("✓ Scenario: {}", scenario.label());

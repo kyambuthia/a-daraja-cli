@@ -46,6 +46,7 @@ pub async fn run(port: u16) -> Result<(), DarajaError> {
         "Completed",
         &confirm_url,
         &validation_url,
+        "sandbox:receive:register",
     )
     .await?;
 

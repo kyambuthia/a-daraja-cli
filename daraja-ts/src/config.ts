@@ -15,6 +15,18 @@ interface PlainCreds {
   initiator_password?: string;
 }
 
+/** Resolve the platform config directory, with an explicit override for apps and tests. */
+export function darajaConfigDir(): string {
+  if (process.env.DARAJA_CONFIG_DIR) return process.env.DARAJA_CONFIG_DIR;
+  if (process.platform === "win32") {
+    return join(
+      process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
+      "daraja"
+    );
+  }
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "daraja");
+}
+
 export function environmentFromSdkKey(sdkKey: string): Environment {
   if (sdkKey.startsWith("dsk_test_")) return "sandbox";
   if (sdkKey.startsWith("dsk_live_")) return "production";
@@ -124,7 +136,7 @@ export async function loadSdkKey(): Promise<string> {
     return process.env.DARAJA_KEY;
   }
 
-  const path = join(homedir(), ".config", "daraja", "key");
+  const path = join(darajaConfigDir(), "key");
   try {
     return (await readFile(path, "utf8")).trim();
   } catch (error) {
@@ -136,7 +148,7 @@ export async function loadSdkKey(): Promise<string> {
 
 export async function loadCredentials(sdkKey: string): Promise<Credentials> {
   const keyBytes = extractKeyBytes(sdkKey);
-  const path = join(homedir(), ".config", "daraja", "credentials.enc");
+  const path = join(darajaConfigDir(), "credentials.enc");
 
   let encrypted: Buffer;
   try {

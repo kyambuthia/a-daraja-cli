@@ -28,6 +28,7 @@ pub async fn register_urls(
     response_type: &str,
     confirmation_url: &str,
     validation_url: &str,
+    idempotency_key: &str,
 ) -> Result<C2bRegisterResponse, DarajaError> {
     validate_shortcode(shortcode)?;
     if !matches!(response_type, "Completed" | "Cancelled") {
@@ -44,7 +45,9 @@ pub async fn register_urls(
         confirmation_url: confirmation_url.to_string(),
         validation_url: validation_url.to_string(),
     };
-    client.post("/mpesa/c2b/v1/registerurl", &request).await
+    client
+        .post("/mpesa/c2b/v1/registerurl", &request, idempotency_key)
+        .await
 }
 
 /// Simulate a C2B transaction (sandbox only).
@@ -54,6 +57,7 @@ pub async fn simulate_c2b(
     amount: u64,
     msisdn: &str,
     bill_ref_number: &str,
+    idempotency_key: &str,
 ) -> Result<C2bRegisterResponse, DarajaError> {
     if !matches!(client.environment(), Environment::Sandbox) {
         return Err(DarajaError::Config(
@@ -71,7 +75,9 @@ pub async fn simulate_c2b(
         "Msisdn": msisdn,
         "BillRefNumber": bill_ref_number,
     });
-    client.post("/mpesa/c2b/v1/simulate", &request).await
+    client
+        .post("/mpesa/c2b/v1/simulate", &request, idempotency_key)
+        .await
 }
 
 #[cfg(test)]
@@ -120,8 +126,16 @@ mod tests {
         };
         let client = DarajaClient::new(credentials, Environment::Production)
             .unwrap()
-            .without_idempotency();
-        let result = simulate_c2b(&client, "174379", 100, "254712345678", "ORDER-1").await;
+            .dangerously_without_idempotency_for_testing();
+        let result = simulate_c2b(
+            &client,
+            "174379",
+            100,
+            "254712345678",
+            "ORDER-1",
+            "test:simulate:1",
+        )
+        .await;
         assert!(matches!(result, Err(DarajaError::Config(message)) if message.contains("sandbox")));
     }
 }

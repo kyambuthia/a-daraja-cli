@@ -17,7 +17,7 @@ export async function queryBalance(
     Initiator: initiatorName(client),
     SecurityCredential: securityCredential,
     CommandID: "AccountBalance",
-    PartyA: client.credentials.shortcode,
+    PartyA: client.shortcode(),
     IdentifierType: "4",
     Remarks: "Balance check",
     QueueTimeOutURL: options.timeoutUrl,

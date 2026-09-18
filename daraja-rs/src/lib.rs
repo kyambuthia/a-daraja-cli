@@ -44,14 +44,13 @@ impl Daraja {
     pub fn from_key(key: &str) -> Result<Self, DarajaError> {
         let key_bytes = config::extract_key_from_sdk_key(key)?;
 
-        let home = std::env::var("HOME")
-            .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
-        let config_path = format!("{}/.config/daraja/credentials.enc", home);
+        let config_path = config::daraja_config_dir()?.join("credentials.enc");
 
         let encrypted_bytes = std::fs::read(&config_path).map_err(|e| {
             DarajaError::Config(format!(
                 "failed to read credentials file at {}: {}",
-                config_path, e
+                config_path.display(),
+                e
             ))
         })?;
 
@@ -75,9 +74,9 @@ impl Daraja {
     /// Use an explicit endpoint, primarily for local simulator and test
     /// environments. Callers are responsible for restricting this override
     /// to trusted endpoints.
-    pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
-        self.client = self.client.with_base_url(url.into());
-        self
+    pub fn with_test_base_url(mut self, url: impl Into<String>) -> Result<Self, DarajaError> {
+        self.client = self.client.with_test_base_url(url.into())?;
+        Ok(self)
     }
 }
 

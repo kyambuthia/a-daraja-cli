@@ -7,7 +7,7 @@
 // 4. Refreshes authentication once on a definitive 401 response
 
 use crate::auth::TokenManager;
-use crate::config::Credentials;
+use crate::config::{Credentials, daraja_config_dir};
 use crate::error::DarajaError;
 use crate::idempotency::{AcquireResult, IdempotencyBackend, IdempotencyStore};
 use crate::types::Environment;
@@ -27,10 +27,10 @@ pub struct DarajaClient {
 }
 
 /// Per-request controls for mutating Daraja operations.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RequestOptions {
     /// Stable business-operation key supplied by the caller.
-    pub idempotency_key: Option<String>,
+    pub idempotency_key: String,
 }
 
 /// Network deadlines applied to OAuth and Daraja API calls.
@@ -52,7 +52,7 @@ impl Default for HttpConfig {
 impl RequestOptions {
     pub fn with_idempotency_key(key: impl Into<String>) -> Self {
         Self {
-            idempotency_key: Some(key.into()),
+            idempotency_key: key.into(),
         }
     }
 }
@@ -96,8 +96,8 @@ impl DarajaClient {
         })
     }
 
-    /// Disable idempotency caching (for tests).
-    pub fn without_idempotency(mut self) -> Self {
+    /// Disable idempotency caching for isolated tests.
+    pub fn dangerously_without_idempotency_for_testing(mut self) -> Self {
         self.idempotency = None;
         self
     }
@@ -124,12 +124,30 @@ impl DarajaClient {
         self.environment
     }
 
-    /// Override the base URL (for testing with wiremock).
-    pub fn with_base_url(mut self, url: String) -> Self {
+    /// Override the sandbox base URL for a local simulator or isolated test.
+    pub fn with_test_base_url(mut self, url: String) -> Result<Self, DarajaError> {
+        if self.environment != Environment::Sandbox {
+            return Err(DarajaError::Config(
+                "endpoint overrides are sandbox-only; production credentials cannot use a custom base URL".into(),
+            ));
+        }
+        let parsed = url::Url::parse(&url)
+            .map_err(|error| DarajaError::Config(format!("invalid test base URL: {error}")))?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(DarajaError::Config(
+                "test base URL must be HTTP(S) without credentials, query, or fragment".into(),
+            ));
+        }
         self.base_url_override = Some(url.clone());
         let tm = self.token_manager.into_inner().with_base_url(url);
         self.token_manager = tokio::sync::Mutex::new(tm);
-        self
+        Ok(self)
     }
 
     fn base_url(&self) -> &str {
@@ -162,9 +180,14 @@ impl DarajaClient {
         &self,
         path: &str,
         body: &T,
+        idempotency_key: &str,
     ) -> Result<R, DarajaError> {
-        self.post_with_options(path, body, RequestOptions::default())
-            .await
+        self.post_with_options(
+            path,
+            body,
+            RequestOptions::with_idempotency_key(idempotency_key),
+        )
+        .await
     }
 
     /// Send a POST request with an optional stable, caller-supplied idempotency key.
@@ -179,9 +202,7 @@ impl DarajaClient {
             .map_err(|e| DarajaError::Network(format!("serialize failed: {}", e)))?;
 
         let fingerprint = request_fingerprint(&body_bytes);
-        let caller_key = options
-            .idempotency_key
-            .unwrap_or_else(|| idempotency_key_for_body(&body_bytes));
+        let caller_key = options.idempotency_key;
         validate_idempotency_key(&caller_key)?;
         let scoped_key = scoped_idempotency_key(
             self.environment,
@@ -202,7 +223,11 @@ impl DarajaClient {
         {
             Ok(response) => response,
             Err(error) => {
-                self.save_idempotency_unknown(&scoped_key);
+                if error.is_ambiguous_outcome() {
+                    self.save_idempotency_unknown(&scoped_key)?;
+                } else {
+                    self.save_idempotency_failed(&scoped_key)?;
+                }
                 return Err(error);
             }
         };
@@ -210,22 +235,26 @@ impl DarajaClient {
         let response_bytes = match response.bytes().await {
             Ok(bytes) => bytes,
             Err(error) => {
-                self.save_idempotency_unknown(&scoped_key);
-                return Err(DarajaError::Network(format!(
-                    "failed to read response: {error}"
+                self.save_idempotency_unknown(&scoped_key)?;
+                return Err(DarajaError::RequestOutcomeUnknown(format!(
+                    "failed to read provider response: {error}"
                 )));
             }
         };
 
         if status.is_success() {
             let parsed = serde_json::from_slice(&response_bytes).map_err(|e| {
-                self.save_idempotency_unknown(&scoped_key);
-                DarajaError::Network(format!("failed to parse response: {e}"))
+                let persistence_error = self.save_idempotency_unknown(&scoped_key).err();
+                persistence_error.unwrap_or_else(|| {
+                    DarajaError::RequestOutcomeUnknown(format!(
+                        "provider returned an unreadable success response: {e}"
+                    ))
+                })
             })?;
-            self.save_idempotency_success(&scoped_key, &response_bytes);
+            self.save_idempotency_success(&scoped_key, &response_bytes)?;
             Ok(parsed)
         } else {
-            self.save_idempotency_failed(&scoped_key);
+            self.save_idempotency_failed(&scoped_key)?;
             let body = String::from_utf8_lossy(&response_bytes);
             Err(api_error(status, &body))
         }
@@ -273,28 +302,40 @@ impl DarajaClient {
         }
     }
 
-    fn save_idempotency_success(&self, key: &str, response: &[u8]) {
-        if let Some(store) = &self.idempotency
-            && let Ok(mut store) = store.lock()
-        {
-            let _ = store.save_success(key, response);
-        }
+    fn save_idempotency_success(&self, key: &str, response: &[u8]) -> Result<(), DarajaError> {
+        let Some(store) = &self.idempotency else {
+            return Ok(());
+        };
+        let mut store = store.lock().map_err(|_| {
+            DarajaError::LocalStateUncertain("idempotency store lock poisoned".into())
+        })?;
+        store.save_success(key, response).map_err(|error| {
+            DarajaError::LocalStateUncertain(format!("save successful response: {error}"))
+        })
     }
 
-    fn save_idempotency_failed(&self, key: &str) {
-        if let Some(store) = &self.idempotency
-            && let Ok(mut store) = store.lock()
-        {
-            let _ = store.save_failed(key);
-        }
+    fn save_idempotency_failed(&self, key: &str) -> Result<(), DarajaError> {
+        let Some(store) = &self.idempotency else {
+            return Ok(());
+        };
+        let mut store = store.lock().map_err(|_| {
+            DarajaError::LocalStateUncertain("idempotency store lock poisoned".into())
+        })?;
+        store.save_failed(key).map_err(|error| {
+            DarajaError::LocalStateUncertain(format!("save definitive failure: {error}"))
+        })
     }
 
-    fn save_idempotency_unknown(&self, key: &str) {
-        if let Some(store) = &self.idempotency
-            && let Ok(mut store) = store.lock()
-        {
-            let _ = store.save_unknown(key);
-        }
+    fn save_idempotency_unknown(&self, key: &str) -> Result<(), DarajaError> {
+        let Some(store) = &self.idempotency else {
+            return Ok(());
+        };
+        let mut store = store.lock().map_err(|_| {
+            DarajaError::LocalStateUncertain("idempotency store lock poisoned".into())
+        })?;
+        store.save_unknown(key).map_err(|error| {
+            DarajaError::LocalStateUncertain(format!("save ambiguous outcome: {error}"))
+        })
     }
 
     async fn send_post(
@@ -317,11 +358,9 @@ impl DarajaClient {
         if let Some(idempotency_key) = idempotency_key {
             request = request.header("Idempotency-Key", idempotency_key);
         }
-        let response = request
-            .body(body.to_vec())
-            .send()
-            .await
-            .map_err(|e| DarajaError::Network(format!("request failed: {}", e)))?;
+        let response = request.body(body.to_vec()).send().await.map_err(|e| {
+            DarajaError::RequestOutcomeUnknown(format!("request transport failed: {e}"))
+        })?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED && !is_retry {
             self.token_manager.lock().await.invalidate();
@@ -362,18 +401,11 @@ impl DarajaClient {
 }
 
 fn default_idempotency_store() -> Result<IdempotencyStore, rusqlite::Error> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let dir = format!("{home}/.config/daraja");
-    std::fs::create_dir_all(&dir).ok();
-    IdempotencyStore::new(&format!("{dir}/idempotency.db"))
-}
-
-/// Derive a deterministic idempotency key from the serialized request body.
-pub fn idempotency_key_for_body(body: &[u8]) -> String {
-    let digest = Sha256::digest(body);
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    uuid::Uuid::from_bytes(bytes).to_string()
+    let dir = daraja_config_dir()
+        .map_err(|error| rusqlite::Error::InvalidParameterName(error.to_string()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| rusqlite::Error::InvalidPath(dir.join(format!("directory: {error}"))))?;
+    IdempotencyStore::new(dir.join("idempotency.db").to_string_lossy().as_ref())
 }
 
 fn request_fingerprint(body: &[u8]) -> String {
@@ -393,7 +425,7 @@ fn scoped_idempotency_key(
     request_fingerprint(format!("{environment}\0{shortcode}\0{path}\0{caller_key}").as_bytes())
 }
 
-fn validate_idempotency_key(key: &str) -> Result<(), DarajaError> {
+pub fn validate_idempotency_key(key: &str) -> Result<(), DarajaError> {
     if key.is_empty()
         || key.len() > 128
         || !key
@@ -592,6 +624,65 @@ mod tests {
             }
         }
 
+        #[test]
+        fn production_clients_reject_endpoint_overrides() {
+            let client = DarajaClient::new(test_credentials(), Environment::Production).unwrap();
+            assert!(
+                client
+                    .with_test_base_url("https://daraja.invalid".into())
+                    .is_err()
+            );
+        }
+
+        struct FailingSuccessStore;
+
+        impl IdempotencyBackend for FailingSuccessStore {
+            fn acquire(&mut self, _key: &str, _fingerprint: &str) -> Result<AcquireResult, String> {
+                Ok(AcquireResult::Acquired)
+            }
+
+            fn save_success(&mut self, _key: &str, _response: &[u8]) -> Result<(), String> {
+                Err("disk full".into())
+            }
+
+            fn save_failed(&mut self, _key: &str) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn save_unknown(&mut self, _key: &str) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        #[tokio::test]
+        async fn successful_response_with_persistence_failure_is_explicit() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/oauth/v1/generate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"access_token": "token", "expires_in": "3599"}),
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/payment"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
+                )
+                .mount(&server)
+                .await;
+            let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
+                .unwrap()
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .with_idempotency_backend(FailingSuccessStore);
+
+            let result: Result<serde_json::Value, _> = client
+                .post("/payment", &serde_json::json!({}), "test:persistence")
+                .await;
+            assert!(matches!(result, Err(DarajaError::LocalStateUncertain(_))));
+        }
+
         #[tokio::test]
         async fn client_post_attaches_bearer_auth() {
             let server = MockServer::start().await;
@@ -619,8 +710,9 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
             let req = serde_json::json!({"test": true});
 
             #[derive(Deserialize)]
@@ -629,7 +721,11 @@ mod tests {
                 code: String,
             }
             let resp: Resp = client
-                .post("/mpesa/stkpush/v1/processrequest", &req)
+                .post(
+                    "/mpesa/stkpush/v1/processrequest",
+                    &req,
+                    "test:post:request",
+                )
                 .await
                 .unwrap();
             assert_eq!(resp.code, "0");
@@ -660,14 +756,18 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
             #[derive(Deserialize)]
             struct Resp {
                 #[allow(dead_code)]
                 ok: bool,
             }
-            let resp: Resp = client.post("/test", &serde_json::json!({})).await.unwrap();
+            let resp: Resp = client
+                .post("/test", &serde_json::json!({}), "test:post:basic")
+                .await
+                .unwrap();
             assert!(resp.ok);
         }
 
@@ -693,8 +793,9 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
             let _: serde_json::Value = client
                 .post_with_options(
                     "/payment",
@@ -727,7 +828,8 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
+                .with_test_base_url(server.uri())
+                .unwrap()
                 .with_idempotency_db(dir.path().join("idempotency.db"))
                 .unwrap();
             let options = || RequestOptions::with_idempotency_key("order-123");
@@ -768,7 +870,8 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
+                .with_test_base_url(server.uri())
+                .unwrap()
                 .with_idempotency_db(&db_path)
                 .unwrap();
 
@@ -779,8 +882,8 @@ mod tests {
             }
 
             let body = serde_json::json!({"Amount": "100"});
-            let first: Resp = client.post("/dedup", &body).await.unwrap();
-            let second: Resp = client.post("/dedup", &body).await.unwrap();
+            let first: Resp = client.post("/dedup", &body, "test:dedup").await.unwrap();
+            let second: Resp = client.post("/dedup", &body, "test:dedup").await.unwrap();
             assert_eq!(first.code, "0");
             assert_eq!(second.code, "0");
         }
@@ -805,14 +908,17 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
             #[derive(Deserialize)]
             struct Resp {
                 #[allow(dead_code)]
                 ok: bool,
             }
-            let result: Result<Resp, _> = client.post("/fail", &serde_json::json!({})).await;
+            let result: Result<Resp, _> = client
+                .post("/fail", &serde_json::json!({}), "test:fail:known")
+                .await;
             assert!(result.is_err());
         }
 
@@ -838,10 +944,12 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
-            let result: Result<serde_json::Value, _> =
-                client.post("/fail", &serde_json::json!({})).await;
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
+            let result: Result<serde_json::Value, _> = client
+                .post("/fail", &serde_json::json!({}), "test:fail:redacted")
+                .await;
             let message = result.unwrap_err().to_string();
             assert!(message.contains("400.001"));
             assert!(message.contains("Request rejected"));
@@ -877,11 +985,13 @@ mod tests {
                 },
             )
             .unwrap()
-            .with_base_url(server.uri())
-            .without_idempotency();
-            let result: Result<serde_json::Value, _> =
-                client.post("/slow", &serde_json::json!({})).await;
-            assert!(matches!(result, Err(DarajaError::Network(_))));
+            .with_test_base_url(server.uri())
+            .unwrap()
+            .dangerously_without_idempotency_for_testing();
+            let result: Result<serde_json::Value, _> = client
+                .post("/slow", &serde_json::json!({}), "test:slow")
+                .await;
+            assert!(matches!(result, Err(DarajaError::RequestOutcomeUnknown(_))));
         }
 
         #[tokio::test]
@@ -930,15 +1040,16 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
             #[derive(Deserialize)]
             struct Resp {
                 #[allow(dead_code)]
                 ok: bool,
             }
             let resp: Resp = client
-                .post("/protected", &serde_json::json!({}))
+                .post("/protected", &serde_json::json!({}), "test:protected")
                 .await
                 .unwrap();
             assert!(resp.ok);

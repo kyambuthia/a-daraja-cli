@@ -8,7 +8,8 @@ full local verification suite passes.
 1. Update the version in `daraja-rs/Cargo.toml`, `cli/Cargo.toml`, and
    `daraja-ts/package.json`.
 2. Refresh `Cargo.lock` and `package-lock.json` when required.
-3. Update user-facing documentation and release notes.
+3. Move relevant entries from `CHANGELOG.md`'s Unreleased section into the new
+   version and update user-facing documentation.
 4. Run the commands listed in the repository verification section below.
 5. Commit the version and documentation changes, then create an annotated tag
    matching the shared version, such as `v0.1.0`.
@@ -25,15 +26,21 @@ the Rust and TypeScript checks, then creates or updates a GitHub release with:
 - an `@pesaraja/sdk` npm package archive; and
 - a SHA-256 checksum beside every artifact.
 
+The release workflow also creates GitHub/Sigstore build-provenance attestations
+for the release assets. Verify a downloaded asset with `gh attestation verify
+<asset> --repo kyambuthia/a-daraja-cli`.
+
 CI smoke-installs the packed npm artifact and the release workflow verifies
 that CLI archives contain only the expected binary and that package archives
 contain the expected entry points. GitHub Actions dependencies are pinned to
 immutable revisions.
 
 The workflow builds CLI archives for Linux x86-64, Linux ARM64, macOS x86-64,
-and macOS ARM64. The workflow does not publish to crates.io or npm. Registry publishing should
-remain a separate, explicitly authorized step with trusted publishing or
-short-lived credentials configured for the repository.
+and macOS ARM64. It does not publish to a registry. The separate manual
+`publish.yml` workflow requires the protected `npm-publish` environment, an
+explicit `publish` confirmation, and npm trusted publishing via GitHub OIDC.
+Configure the npm package's trusted publisher for this repository and workflow
+before enabling it. crates.io publishing remains a separately authorized step.
 
 Other platforms use the installer's source-build fallback pinned to the selected
 release tag.
@@ -49,6 +56,7 @@ cargo package -p daraja-rs --locked
 npm ci
 npm run build
 npm test
+npm run lint:package -w @pesaraja/sdk
 npm pack -w @pesaraja/sdk --dry-run
 npm audit --omit=dev --audit-level=high
 sh -n install.sh

@@ -1,75 +1,47 @@
 # Roadmap
 
-This roadmap tracks the next implementation steps for the current codebase. It is intentionally short and stays aligned with the shipped CLI behavior.
+A Daraja CLI is an alpha toolkit for integrating Safaricom Daraja safely. The
+repository ships the `pesaraja` command, the `daraja-rs` crate, and the
+`@pesaraja/sdk` TypeScript package. This roadmap describes remaining work; it
+does not describe shipped behavior.
 
-## Current State
+## Public preview — 0.1
 
-- `pesaraja init` creates the active `personal` profile.
-- The CLI persists encrypted credentials and a local SDK key under `~/.config/daraja/`.
-- `config` and `doctor` already expose the active profile state and setup health.
-- The docs folder is current and points to install, setup, and usage guides.
-- User-facing `setup`, `use`, and `--profile` flows are implemented for the CLI.
+- Keep CI, package linting, dependency policy, and simulator integration green.
+- Enable GitHub private vulnerability reporting and Discussions.
+- Validate npm trusted publishing in the protected `npm-publish` environment.
+- Publish signed/checksummed release artifacts and verify install instructions.
+- Document the known callback-authentication limitation prominently.
 
-## Next Steps
+Exit criteria: repeatable tagged builds, clean package checks, private security
+intake, and no unresolved critical/high dependency advisories.
 
-### 1. Finish Profile Architecture
+## Payment lifecycle — 0.2
 
-Harden profile handling further before adding more commands.
+- Add authoritative reconciliation for B2C and reversal callbacks/results.
+- Add provider transaction IDs and result payload summaries to all ledger kinds.
+- Define an operator workflow for resolving `unknown` outcomes.
+- Add migration/versioning tests for the local ledger schema.
 
-- Keep `personal` as the default active profile created by `init`.
-- Keep profile registry loading, saving, and summary output consistent across the CLI.
-- Keep profile context resolution as the single code path used by setup and action commands.
-- Preserve the existing on-disk layout unless a migration is necessary.
+Exit criteria: every money-moving operation has a durable, inspectable lifecycle
+and documented recovery path.
 
-### 2. Add the Setup Command Flow
+## Callback trust — 0.3
 
-Extend the merchant setup flow as needed on top of the existing personal profile flow.
+- Implement a documented, provider-supported callback authentication mechanism
+  when Safaricom supplies a verifiable contract.
+- Add replay protection, timestamp policy, and key/certificate rotation guidance.
+- Keep fulfillment APIs fail-closed when verification is unavailable.
 
-- `pesaraja setup paybill`, `till`, and `pochi` are implemented.
-- Support interactive and non-interactive setup for each merchant type.
-- Validate merchant number, environment, passkey, and initiator credentials before saving.
-- Persist each merchant profile without overwriting the active personal profile.
+Exit criteria: applications can distinguish parsed callbacks from authenticated
+provider events without relying on source IP alone.
 
-### 3. Add Profile Switching
+## Stable release — 1.0
 
-Keep persistent and one-shot profile selection predictable.
+- Stabilize Rust and TypeScript public APIs with semver compatibility checks.
+- Publish an upgrade and deprecation policy.
+- Complete accessibility and terminal UX review for interactive commands.
+- Establish supported Rust and Node release lines and maintenance windows.
 
-- `pesaraja use <profile>` and `--profile <name>` are implemented.
-- The selected profile is stored as the active profile.
-- Show the active profile name, type, identifier, and environment after switching.
-- Add `--profile <name>` to commands that depend on account context.
-
-### 4. Make Command Output Explicit
-
-Remove ambiguity when commands run against different account types.
-
-- Echo the resolved profile before account-sensitive commands run.
-- Keep `config` output readable in human mode and stable in JSON mode.
-- Make `doctor` report profile-specific issues, especially missing keys or certificates.
-- Keep balance and transaction commands clear about which profile they used.
-
-### 5. Tighten Tests
-
-Protect the new flow as it lands.
-
-- Add CLI tests for `init`, `setup`, `use`, `config`, and `doctor`.
-- Add tests for profile resolution precedence.
-- Add tests for JSON output stability.
-- Add tests for non-interactive setup validation and failure cases.
-
-### 6. Update Documentation Last
-
-Keep the docs in sync with the implemented commands.
-
-- Update the root README when the command surface changes.
-- Update `docs/setup.md` with the final setup flow.
-- Update `docs/usage.md` with profile-aware examples once `use` and `--profile` exist.
-
-## Suggested Order
-
-1. Finish profile resolution and registry handling.
-2. Implement `setup paybill|till|pochi`.
-3. Add `use <profile>` and `--profile`.
-4. Make command output explicit.
-5. Expand tests.
-6. Refresh docs after the behavior is stable.
+Items enter a milestone only with a user problem, safety analysis, and focused
+verification plan. See [CONTRIBUTING.md](CONTRIBUTING.md).

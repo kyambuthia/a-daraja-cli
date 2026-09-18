@@ -1,9 +1,14 @@
-# pesaraja
+# A Daraja CLI
 
 > **Alpha software:** do not use for production money movement yet. Callback
 > signature verification is not currently implemented.
 
-> Daraja ni ngumu. Hii sio. Pesa raja.
+> A safer command-line interface and SDK toolkit for Safaricom Daraja and M-Pesa.
+
+**Naming:** A Daraja CLI is the project and repository. `pesaraja` is the
+installed command, `daraja-rs` is the Rust crate, and `@pesaraja/sdk` is the
+TypeScript package. The command and package names remain stable for existing
+scripts and imports.
 
 Current code-backed docs:
 
@@ -13,6 +18,7 @@ Current code-backed docs:
 - [API reference](API.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Release process](docs/releasing.md)
+- [Changelog](CHANGELOG.md)
 
 Safaricom's [Daraja API](https://developer.safaricom.co.ke) is a bridge. A broken one. This is the money bridge.
 
@@ -38,8 +44,8 @@ pesaraja refund --id QEJ78H8JKR --amount 100
 ## Install
 
 ```bash
-git clone https://github.com/kyambuthia/pesaraja
-cd pesaraja
+git clone https://github.com/kyambuthia/a-daraja-cli
+cd a-daraja-cli
 cargo build --release -p cli
 cp target/release/pesaraja ~/.local/bin/
 ```
@@ -54,7 +60,9 @@ the installer builds the selected tag from source.
 pesaraja init
 ```
 
-Walks you through Daraja credentials, encrypts them to `~/.config/daraja/credentials.enc`, and prints your SDK key:
+Walks you through Daraja credentials, encrypts them in the platform config
+directory, and prints your SDK key. Set `DARAJA_CONFIG_DIR` to choose an
+explicit directory (useful for containers and tests).
 
 ```
 DARAJA_KEY=dsk_test_...
@@ -69,6 +77,24 @@ DARAJA_KEY=dsk_test_...
 | `daraja-ts/` | `@pesaraja/sdk` — TypeScript / Node / Next.js |
 
 Same `DARAJA_KEY` works in every language.
+
+## Safe simulator quick start
+
+No Daraja network access or real money is needed for the deterministic STK path:
+
+```bash
+# Terminal 1
+pesaraja simulator --port 8787 --scenario success
+
+# Terminal 2, after sandbox `pesaraja init`
+pesaraja prompt --phone 254712345678 --amount 100 \
+  --reference DEMO-1 --description "Simulator demo" \
+  --idempotency-key demo:stk:1 --base-url http://127.0.0.1:8787 --yes
+pesaraja payments list
+```
+
+Production money-moving commands require a stable caller-provided idempotency
+key. Sandbox CLI commands generate and persist one when omitted.
 
 ## TypeScript / website
 
@@ -119,3 +145,6 @@ npm install file:./daraja-ts
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md), and
+[SECURITY.md](SECURITY.md) before participating or reporting a problem.

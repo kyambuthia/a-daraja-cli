@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DarajaClient } from "./client.js";
+import { DarajaError } from "./error.js";
 import { IdempotencyStore } from "./idempotency.js";
 import type { Credentials } from "./types.js";
 import { simulateC2b } from "./api/c2b.js";
@@ -32,8 +33,8 @@ describe("DarajaClient idempotency", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "sandbox", {
-      baseUrlOverride: "https://daraja.invalid",
-      idempotency: false,
+      testBaseUrlOverride: "https://daraja.invalid",
+      dangerouslyDisableIdempotencyForTesting: true,
     });
 
     await client.post(
@@ -56,8 +57,8 @@ describe("DarajaClient idempotency", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ value: 1 })));
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "sandbox", {
-      baseUrlOverride: "https://daraja.invalid",
-      idempotency: false,
+      testBaseUrlOverride: "https://daraja.invalid",
+      dangerouslyDisableIdempotencyForTesting: true,
     });
 
     await expect(client.postWithoutIdempotency("/query", {})).resolves.toEqual({ value: 1 });
@@ -88,11 +89,15 @@ describe("DarajaClient idempotency", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "sandbox", {
-      baseUrlOverride: "https://daraja.invalid",
+      testBaseUrlOverride: "https://daraja.invalid",
       idempotencyStore: backend,
     });
 
-    await client.post("/payment", { Amount: "100" });
+    await client.post(
+      "/payment",
+      { Amount: "100" },
+      { idempotencyKey: "order-application-backend" }
+    );
     expect(entries.size).toBe(1);
   });
 
@@ -107,7 +112,7 @@ describe("DarajaClient idempotency", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "sandbox", {
-      baseUrlOverride: "https://daraja.invalid",
+      testBaseUrlOverride: "https://daraja.invalid",
       idempotencyStore: store,
     });
 
@@ -144,11 +149,13 @@ describe("DarajaClient idempotency", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "sandbox", {
-      baseUrlOverride: "https://daraja.invalid",
-      idempotency: false,
+      testBaseUrlOverride: "https://daraja.invalid",
+      dangerouslyDisableIdempotencyForTesting: true,
     });
 
-    const error = await client.post("/payment", {}).catch((value: unknown) => value);
+    const error = await client
+      .post("/payment", {}, { idempotencyKey: "order-redacted-error" })
+      .catch((value: unknown) => value);
     expect(String(error)).toContain("400.001");
     expect(String(error)).toContain("Request rejected");
     expect(String(error)).not.toContain("must-not-leak");
@@ -167,12 +174,44 @@ describe("DarajaClient idempotency", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "sandbox", {
-      baseUrlOverride: "https://daraja.invalid",
-      idempotency: false,
+      testBaseUrlOverride: "https://daraja.invalid",
+      dangerouslyDisableIdempotencyForTesting: true,
       requestTimeoutMs: 20,
     });
 
-    await expect(client.post("/slow", {})).rejects.toBeDefined();
+    await expect(
+      client.post("/slow", {}, { idempotencyKey: "order-timeout" })
+    ).rejects.toBeDefined();
+  });
+
+  it("surfaces a successful provider response that cannot be persisted", async () => {
+    const backend = {
+      async acquire() {
+        return { kind: "acquired" as const };
+      },
+      async saveSuccess() {
+        throw new Error("disk full");
+      },
+      async saveFailed() {},
+      async saveUnknown() {},
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: "token", expires_in: "3599" }))
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DarajaClient(credentials, "sandbox", {
+      testBaseUrlOverride: "https://daraja.invalid",
+      idempotencyStore: backend,
+    });
+
+    const error = await client
+      .post("/payment", {}, { idempotencyKey: "test:persistence-failure" })
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(DarajaError);
+    expect((error as DarajaError).kind).toBe("local-state-uncertain");
   });
 });
 
@@ -181,13 +220,37 @@ describe("DarajaClient environment boundaries", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const client = new DarajaClient(credentials, "production", {
-      idempotency: false,
+      dangerouslyDisableIdempotencyForTesting: true,
     });
 
     await expect(
-      simulateC2b(client, { phone: "254712345678", amount: 100 })
+      simulateC2b(client, {
+        phone: "254712345678",
+        amount: 100,
+        idempotencyKey: "test:production-simulation",
+      })
     ).rejects.toThrow("sandbox");
     expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+
+  it("rejects endpoint overrides in production", () => {
+    expect(
+      () =>
+        new DarajaClient(credentials, "production", {
+          testBaseUrlOverride: "https://daraja.invalid",
+        })
+    ).toThrow("sandbox-only");
+  });
+
+  it("does not expose credentials as enumerable client state", () => {
+    const client = new DarajaClient(credentials, "sandbox", {
+      dangerouslyDisableIdempotencyForTesting: true,
+    });
+    const serialized = JSON.stringify(client);
+
+    expect(serialized).not.toContain("consumer-secret");
+    expect(serialized).not.toContain("passkey");
+    expect(Object.keys(client)).not.toContain("credentials");
   });
 });

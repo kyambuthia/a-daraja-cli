@@ -19,10 +19,16 @@ pub struct StkPushOptions {
     pub account_reference: String,
     pub callback_url: String,
     pub transaction_type: StkTransactionType,
+    pub idempotency_key: String,
 }
 
 impl StkPushOptions {
-    pub fn new(phone: impl Into<String>, amount: u64, callback_url: impl Into<String>) -> Self {
+    pub fn new(
+        phone: impl Into<String>,
+        amount: u64,
+        callback_url: impl Into<String>,
+        idempotency_key: impl Into<String>,
+    ) -> Self {
         Self {
             phone: phone.into(),
             amount,
@@ -30,6 +36,7 @@ impl StkPushOptions {
             account_reference: "Payment".into(),
             callback_url: callback_url.into(),
             transaction_type: StkTransactionType::PayBill,
+            idempotency_key: idempotency_key.into(),
         }
     }
 
@@ -62,7 +69,7 @@ pub async fn stk_push_with_options(
         &options.account_reference,
         &options.callback_url,
         options.transaction_type,
-        RequestOptions::default(),
+        RequestOptions::with_idempotency_key(&options.idempotency_key),
     )
     .await
 }
@@ -86,6 +93,7 @@ struct StkPushQueryRequest {
     checkout_request_id: String,
 }
 
+#[deprecated(note = "use stk_push_with_idempotency_key and supply a stable operation key")]
 pub async fn stk_push(
     client: &DarajaClient,
     phone: &str,
@@ -94,19 +102,19 @@ pub async fn stk_push(
     account_reference: &str,
     callback_url: &str,
 ) -> Result<StkPushResponse, DarajaError> {
-    stk_push_with_type(
+    let _ = (
         client,
         phone,
         amount,
         description,
         account_reference,
         callback_url,
-        StkTransactionType::PayBill,
-    )
-    .await
+    );
+    Err(DarajaError::MissingIdempotencyKey)
 }
 
 /// Initiate an STK Push with an explicit transaction type (PayBill or Till).
+#[deprecated(note = "use stk_push_with_type_and_idempotency_key")]
 pub async fn stk_push_with_type(
     client: &DarajaClient,
     phone: &str,
@@ -116,7 +124,7 @@ pub async fn stk_push_with_type(
     callback_url: &str,
     transaction_type: StkTransactionType,
 ) -> Result<StkPushResponse, DarajaError> {
-    send_stk_push(
+    let _ = (
         client,
         phone,
         amount,
@@ -124,7 +132,30 @@ pub async fn stk_push_with_type(
         account_reference,
         callback_url,
         transaction_type,
-        RequestOptions::default(),
+    );
+    Err(DarajaError::MissingIdempotencyKey)
+}
+
+/// Initiate a PayBill STK Push using a stable business-operation key.
+#[allow(clippy::too_many_arguments)]
+pub async fn stk_push_with_idempotency_key(
+    client: &DarajaClient,
+    phone: &str,
+    amount: u64,
+    description: &str,
+    account_reference: &str,
+    callback_url: &str,
+    idempotency_key: &str,
+) -> Result<StkPushResponse, DarajaError> {
+    stk_push_with_type_and_idempotency_key(
+        client,
+        phone,
+        amount,
+        description,
+        account_reference,
+        callback_url,
+        StkTransactionType::PayBill,
+        idempotency_key,
     )
     .await
 }
@@ -333,10 +364,15 @@ mod tests {
 
     #[test]
     fn typed_options_provide_safe_defaults() {
-        let options = StkPushOptions::new("254712345678", 100, "https://example.com/callback")
-            .with_reference("ORDER-123")
-            .with_description("Order payment")
-            .with_transaction_type(StkTransactionType::Till);
+        let options = StkPushOptions::new(
+            "254712345678",
+            100,
+            "https://example.com/callback",
+            "test:stk:options",
+        )
+        .with_reference("ORDER-123")
+        .with_description("Order payment")
+        .with_transaction_type(StkTransactionType::Till);
         assert_eq!(options.account_reference, "ORDER-123");
         assert_eq!(options.description, "Order payment");
         assert_eq!(options.transaction_type, StkTransactionType::Till);
@@ -351,7 +387,7 @@ mod tests {
 
     #[cfg(test)]
     mod async_tests {
-        use super::super::stk_push;
+        use super::super::stk_push_with_idempotency_key;
         use crate::client::DarajaClient;
         use crate::config::Credentials;
         use crate::types::Environment;
@@ -409,15 +445,17 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
-            let resp = stk_push(
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
+            let resp = stk_push_with_idempotency_key(
                 &client,
                 "254712345678",
                 100,
                 "Moringa seedlings",
                 "Order #123",
                 "https://example.com/callback",
+                "test:stk:request-body",
             )
             .await
             .unwrap();
@@ -446,9 +484,19 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
-            let result = stk_push(&client, "254712345678", 100, "test", "ref", "https://cb").await;
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
+            let result = stk_push_with_idempotency_key(
+                &client,
+                "254712345678",
+                100,
+                "test",
+                "ref",
+                "https://cb",
+                "test:stk:error",
+            )
+            .await;
             assert!(result.is_err());
         }
     }

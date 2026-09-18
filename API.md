@@ -1,11 +1,11 @@
 # Daraja API Reference
 
-This page records the Daraja protocol shapes implemented by Pesaraja. It is
+This page records the Daraja protocol shapes implemented by A Daraja CLI. It is
 not a substitute for the current Safaricom contract for your app and product.
 For SDK and CLI behavior, see the [usage guide](docs/usage.md) and
 [architecture](docs/ARCHITECTURE.md).
 
-## Pesaraja Request Contract
+## A Daraja CLI Request Contract
 
 Before sending a request, the Rust and TypeScript SDKs enforce these shared
 boundaries where applicable:
@@ -31,8 +31,8 @@ errors to avoid leaking credentials or complete payment payloads.
 
 ### Idempotency
 
-Pesaraja sends an `Idempotency-Key` header and records request state locally.
-Callers should provide a stable business-operation key for STK prompts, B2C
+A Daraja CLI sends an `Idempotency-Key` header and records request state locally.
+Callers must provide a stable business-operation key for STK prompts, B2C
 payments, and reversals. The CLI exposes `--idempotency-key`; TypeScript accepts
 `idempotencyKey`; Rust provides the corresponding
 `*_with_idempotency_key` functions.
@@ -45,7 +45,8 @@ provide distributed exactly-once processing across multiple hosts.
 Rust exposes `IdempotencyBackend` and TypeScript accepts the same storage
 contract so applications can connect shared Redis, SQL, or equivalent stores.
 
-The Rust SDK's `PaymentStore` provides a durable SQLite payment ledger with
+The Rust SDK's `PaymentStore` provides a durable SQLite payment ledger for STK,
+B2C, and reversal operations, with provider conversation identifiers and
 guarded lifecycle transitions and immutable events. Applications should create
 the record before sending a payment request and use the `unknown` state when a
 network outcome cannot be established.
@@ -56,7 +57,7 @@ treated as success.
 
 ### Callback handling
 
-Callback bodies are untrusted input. Pesaraja validates their structure and
+Callback bodies are untrusted input. A Daraja CLI validates their structure and
 domain fields and provides stable replay-deduplication keys. TypeScript can
 also match an STK callback to the expected checkout ID, merchant request ID,
 amount, and receipt.
@@ -100,7 +101,7 @@ Response:
 }
 ```
 
-Use the returned `expires_in` value. Pesaraja treats the token as expired 30
+Use the returned `expires_in` value. A Daraja CLI treats the token as expired 30
 seconds early to avoid starting a request with a nearly expired token.
 
 ---

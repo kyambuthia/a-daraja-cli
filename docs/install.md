@@ -3,15 +3,15 @@
 ## Requirements
 
 - Rust and Cargo for the CLI build path.
-- Node.js 18 or newer for the TypeScript SDK.
+- Node.js 22 or 24 for the TypeScript SDK.
 - A Safaricom Daraja app with consumer key and consumer secret.
 - A PayBill or Till shortcode. Phone numbers are rejected where a BusinessShortCode is required.
 
 ## Install The CLI From Source
 
 ```bash
-git clone https://github.com/kyambuthia/pesaraja
-cd pesaraja
+git clone https://github.com/kyambuthia/a-daraja-cli
+cd a-daraja-cli
 cargo build --release -p cli
 install -m 755 target/release/pesaraja ~/.local/bin/pesaraja
 ```
@@ -35,7 +35,7 @@ The installer uses a checksum-verified prebuilt release only when
 falls back to `cargo install` pinned to that release tag.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kyambuthia/pesaraja/trunk/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/kyambuthia/a-daraja-cli/trunk/install.sh | \
   PESARAJA_VERSION=v0.1.0 sh
 ```
 
@@ -53,10 +53,16 @@ npm run build -w @pesaraja/sdk
 From another local project, install the package by path until the package is published:
 
 ```bash
-npm install /path/to/pesaraja/daraja-ts
+npm install /path/to/a-daraja-cli/daraja-ts
 ```
 
 The package exports ESM from `@pesaraja/sdk`.
+
+## Configuration directory
+
+The CLI and both SDKs use the operating system's conventional configuration
+directory: `$XDG_CONFIG_HOME/daraja` (or `~/.config/daraja`) on Unix and
+`%APPDATA%\daraja` on Windows. `DARAJA_CONFIG_DIR` overrides this location.
 
 ## Verify The Install
 

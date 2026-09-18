@@ -11,6 +11,9 @@ concurrency:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   cli-assets:
@@ -37,9 +40,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          targets: ${{ matrix.target }}
+      - run: rustup target add ${{ matrix.target }}
       - name: Install Linux ARM64 linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -54,11 +55,14 @@ jobs:
         run: |
           archive="pesaraja-${TAG}-${OS}-${ARCH}.tar.gz"
           mkdir -p release
+          mkdir -p staging
           if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           fi
           cargo build --release --locked -p cli --target "$TARGET"
-          tar -C "target/${TARGET}/release" -czf "release/${archive}" pesaraja
+          install -m 755 "target/${TARGET}/release/pesaraja" staging/pesaraja
+          install -m 644 LICENSE staging/LICENSE
+          tar -C staging -czf "release/${archive}" pesaraja LICENSE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cli-${{ matrix.os }}-${{ matrix.arch }}
@@ -69,9 +73,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          components: clippy, rustfmt
+          fetch-depth: 0
+      - run: rustup component add clippy rustfmt
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.x
@@ -95,11 +99,23 @@ jobs:
           cargo check --workspace --locked
           cargo test --workspace --locked
 
+      - name: Check Rust public API compatibility
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$previous_tag" ]; then
+            rustup update stable
+            cargo +stable install cargo-semver-checks --version 0.50.0 --locked
+            cargo +stable semver-checks --package daraja-rs --baseline-rev "$previous_tag"
+          else
+            echo "No previous release tag; skipping compatibility comparison."
+          fi
+
       - name: Verify TypeScript workspace
         run: |
           npm ci
           npm run build
           npm test
+          npm run lint:package -w @pesaraja/sdk
 
       - name: Build release assets
         env:
@@ -122,7 +138,9 @@ jobs:
       - name: Create checksums
         run: |
           for asset in release/*.tar.gz; do
-            test "$(tar -tzf "$asset")" = "pesaraja"
+            test "$(tar -tzf "$asset" | wc -l | tr -d ' ')" = "2"
+            tar -tzf "$asset" | grep -qx pesaraja
+            tar -tzf "$asset" | grep -qx LICENSE
           done
           test -n "$(tar -tzf release/daraja-rs-*.crate | grep 'Cargo.toml')"
           test -n "$(tar -tzf release/*.tgz | grep 'package/dist/index.js')"
@@ -130,6 +148,11 @@ jobs:
             filename="$(basename "$asset")"
             (cd release && sha256sum "$filename" > "${filename}.sha256")
           done
+
+      - name: Attest release artifacts
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release/*
 
       - name: Create or update GitHub release
         env:

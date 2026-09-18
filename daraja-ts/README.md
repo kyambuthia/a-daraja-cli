@@ -1,7 +1,7 @@
 # @pesaraja/sdk
 
 TypeScript/Node.js SDK for Safaricom Daraja and M-Pesa. This package is part
-of the [Pesaraja](https://github.com/kyambuthia/pesaraja) monorepo.
+of the [A Daraja CLI](https://github.com/kyambuthia/a-daraja-cli) monorepo.
 
 The project is alpha software and is not ready for production money movement.
 Callback parsing does not authenticate the callback sender; reconcile payment
@@ -19,10 +19,10 @@ await daraja.prompt({
 });
 ```
 
-See the repository [README](https://github.com/kyambuthia/pesaraja#readme),
-[API guide](https://github.com/kyambuthia/pesaraja/blob/trunk/API.md),
-[architecture](https://github.com/kyambuthia/pesaraja/blob/trunk/docs/ARCHITECTURE.md), and
-[usage guide](https://github.com/kyambuthia/pesaraja/blob/trunk/docs/usage.md)
+See the repository [README](https://github.com/kyambuthia/a-daraja-cli#readme),
+[API guide](https://github.com/kyambuthia/a-daraja-cli/blob/trunk/API.md),
+[architecture](https://github.com/kyambuthia/a-daraja-cli/blob/trunk/docs/ARCHITECTURE.md), and
+[usage guide](https://github.com/kyambuthia/a-daraja-cli/blob/trunk/docs/usage.md)
 for setup, supported operations, and safety constraints.
 
 Licensed under MIT.

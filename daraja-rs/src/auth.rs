@@ -58,7 +58,7 @@ impl TokenManager {
     }
 
     /// Override the base URL (for testing with wiremock).
-    pub fn with_base_url(mut self, url: String) -> Self {
+    pub(crate) fn with_base_url(mut self, url: String) -> Self {
         self.base_url_override = Some(url);
         self
     }

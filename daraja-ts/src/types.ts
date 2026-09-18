@@ -13,7 +13,7 @@ export type StkTransactionType = "paybill" | "till";
 
 export interface IdempotentOptions {
   /** Stable business-operation key. Reuse only for the exact same request. */
-  idempotencyKey?: string;
+  idempotencyKey: string;
 }
 
 export interface PromptOptions extends IdempotentOptions {

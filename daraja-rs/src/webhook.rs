@@ -154,7 +154,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if value.is_empty() || !value.len().is_multiple_of(2) {
+    if value.is_empty() || value.len() % 2 != 0 {
         return None;
     }
     let bytes = value.as_bytes();

@@ -11,10 +11,13 @@ describe("Daraja constructors", () => {
         shortcode: "174379",
       },
       "production",
-      { idempotency: false, requestTimeoutMs: 5_000 }
+      {
+        dangerouslyDisableIdempotencyForTesting: true,
+        requestTimeoutMs: 5_000,
+      }
     );
 
     expect(daraja.getClient().environment).toBe("production");
-    expect(daraja.getClient().credentials.shortcode).toBe("174379");
+    expect(daraja.getClient().shortcode()).toBe("174379");
   });
 });

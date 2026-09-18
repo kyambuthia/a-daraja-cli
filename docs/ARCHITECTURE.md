@@ -1,4 +1,4 @@
-# Pesaraja Architecture
+# A Daraja CLI Architecture
 
 This document describes the implementation in this repository. Future product
 ideas belong in [`roadmap.md`](../roadmap.md) and must not be treated as shipped
@@ -10,7 +10,7 @@ guarantees.
 | --- | --- |
 | `daraja-rs` | Rust Daraja client, request types, credentials, certificates, validation, idempotency, and callback parsing. |
 | `cli` | The `pesaraja` command-line interface and local sandbox callback receiver. |
-| `daraja-ts` | The ESM `@pesaraja/sdk` TypeScript client for Node.js 18 and newer. |
+| `daraja-ts` | The ESM `@pesaraja/sdk` TypeScript client for Node.js 22 and newer. |
 
 The Rust and TypeScript SDKs intentionally share the same Daraja field names,
 credential blob format, validation contract, and environment prefixes.
@@ -35,7 +35,7 @@ Status, balance, and STK query POSTs bypass local idempotency caching and the
 
 ## Idempotency
 
-Callers should provide a stable business-operation key:
+Callers must provide a stable business-operation key for money movement:
 
 ```text
 order:ORDER-123:stk
@@ -61,7 +61,7 @@ Rust applications can provide an `IdempotencyBackend` through
 remain local defaults, not distributed coordination.
 
 The Rust SDK also provides `PaymentStore`, a SQLite ledger with immutable
-payment events. Records are created before a provider request and move through
+payment events for STK, B2C, and reversals. Records are created before a provider request and move through
 guarded `created`, `submitted`, `pending`, `succeeded`, `failed`, `unknown`,
 and `reversed` states. An `unknown` result can be reconciled explicitly; it
 cannot be silently retried as a new payment.
@@ -72,7 +72,10 @@ pending, and repeating the same successful reconciliation is idempotent.
 
 ## Credentials
 
-`pesaraja init` stores files under `~/.config/daraja/`:
+`pesaraja init` stores files in the platform config directory. Set
+`DARAJA_CONFIG_DIR` to override it; otherwise Unix uses
+`$XDG_CONFIG_HOME/daraja` (falling back to `~/.config/daraja`) and Windows uses
+`%APPDATA%\daraja`:
 
 ```text
 key                       local AES key, mode 0600 on Unix

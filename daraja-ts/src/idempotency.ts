@@ -9,8 +9,8 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { darajaConfigDir } from "./config.js";
 import { DarajaError } from "./error.js";
 import type { Environment } from "./types.js";
 
@@ -49,11 +49,6 @@ export function requestFingerprint(body: Buffer | string): string {
   return createHash("sha256").update(body).digest("hex");
 }
 
-export function idempotencyKeyForBody(body: Buffer | string): string {
-  const hex = requestFingerprint(body).slice(0, 32);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-}
-
 export function scopedIdempotencyKey(
   environment: Environment,
   shortcode: string,
@@ -68,13 +63,14 @@ export function scopedIdempotencyKey(
 export function validateIdempotencyKey(key: string): void {
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) {
     throw new DarajaError(
-      "Idempotency key must be 1-128 ASCII letters, numbers, '.', ':', '_' or '-'."
+      "Idempotency key must be 1-128 ASCII letters, numbers, '.', ':', '_' or '-'.",
+      { kind: "idempotency" }
     );
   }
 }
 
 function defaultCachePath(): string {
-  return join(homedir(), ".config", "daraja", "idempotency-ts.json");
+  return join(darajaConfigDir(), "idempotency-ts.json");
 }
 
 function unixNow(): number {
@@ -98,15 +94,16 @@ function parseCache(raw: string): CacheFile {
     parsed = JSON.parse(raw);
   } catch {
     throw new DarajaError(
-      "Idempotency cache is corrupt; refusing to send a potentially duplicate payment."
+      "Idempotency cache is corrupt; refusing to send a potentially duplicate payment.",
+      { kind: "idempotency" }
     );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new DarajaError("Idempotency cache has an invalid format.");
+    throw new DarajaError("Idempotency cache has an invalid format.", { kind: "idempotency" });
   }
   for (const value of Object.values(parsed)) {
     if (!isCacheEntry(value)) {
-      throw new DarajaError("Idempotency cache has an invalid entry.");
+      throw new DarajaError("Idempotency cache has an invalid entry.", { kind: "idempotency" });
     }
   }
   return parsed as CacheFile;
@@ -125,7 +122,9 @@ export class IdempotencyStore implements IdempotencyBackend {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
       if (error instanceof DarajaError) throw error;
-      throw new DarajaError(`Failed to read idempotency cache: ${error}`);
+      throw new DarajaError(`Failed to read idempotency cache: ${error}`, {
+        kind: "idempotency",
+      });
     }
   }
 
@@ -165,7 +164,8 @@ export class IdempotencyStore implements IdempotencyBackend {
         }
         if (Date.now() >= deadline) {
           throw new DarajaError(
-            "Timed out waiting for the idempotency cache lock; no request was sent."
+            "Timed out waiting for the idempotency cache lock; no request was sent.",
+            { kind: "idempotency" }
           );
         }
         await delay(20);
@@ -183,7 +183,12 @@ export class IdempotencyStore implements IdempotencyBackend {
   cleanupExpired(cache: CacheFile): void {
     const cutoff = unixNow() - TTL_SECS;
     for (const [key, entry] of Object.entries(cache)) {
-      if (entry.createdAt < cutoff) delete cache[key];
+      if (
+        entry.createdAt < cutoff &&
+        (entry.status === "success" || entry.status === "failed")
+      ) {
+        delete cache[key];
+      }
     }
   }
 
@@ -234,7 +239,9 @@ export class IdempotencyStore implements IdempotencyBackend {
       const cache = await this.loadFresh();
       const entry = cache[key];
       if (!entry) {
-        throw new DarajaError("Idempotency reservation was lost; do not retry.");
+        throw new DarajaError("Idempotency reservation was lost; do not retry.", {
+          kind: "idempotency",
+        });
       }
       cache[key] = { ...entry, status, response, createdAt: unixNow() };
       await this.saveAtomically(cache);

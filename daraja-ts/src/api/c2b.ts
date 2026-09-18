@@ -14,7 +14,7 @@ export async function registerUrls(
   client: DarajaClient,
   options: RegisterOptions
 ): Promise<C2bRegisterResponse> {
-  const shortcode = options.shortcode ?? client.credentials.shortcode;
+  const shortcode = options.shortcode ?? client.shortcode();
   validateShortcode(shortcode);
   validateUrl("Confirmation URL", options.confirmationUrl, client.environment);
   validateUrl("Validation URL", options.validationUrl, client.environment);
@@ -33,7 +33,7 @@ export async function simulateC2b(
   if (client.environment !== "sandbox") {
     throw new DarajaError("C2B simulation is available only in the sandbox environment.");
   }
-  const shortcode = options.shortcode ?? client.credentials.shortcode;
+  const shortcode = options.shortcode ?? client.shortcode();
   validateShortcode(shortcode);
   validateAmount(options.amount);
   const phone = validatePhone(options.phone);

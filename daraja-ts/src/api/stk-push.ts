@@ -1,5 +1,5 @@
 import type { DarajaClient } from "../client.js";
-import { currentTimestamp, generateStkPassword } from "../security.js";
+import { currentTimestamp } from "../security.js";
 import type {
   PromptOptions,
   StkPushResponse,
@@ -17,13 +17,9 @@ export async function stkPush(
   validateRequiredText("Description", options.description ?? "Payment", 100);
   validateRequiredText("Account reference", options.reference ?? "Payment", 100);
   validateUrl("Callback URL", options.callbackUrl, client.environment);
-  const shortcode = client.credentials.shortcode;
+  const shortcode = client.shortcode();
   const timestamp = currentTimestamp();
-  const password = generateStkPassword(
-    shortcode,
-    client.credentials.passkey,
-    timestamp
-  );
+  const password = client.stkPassword(timestamp);
   const transactionType = stkTransactionTypeValue(options.type ?? "paybill");
 
   return client.post<StkPushResponse>("/mpesa/stkpush/v1/processrequest", {
@@ -46,13 +42,9 @@ export async function stkPushQuery(
   checkoutRequestId: string
 ): Promise<StkPushResponse> {
   validateRequiredText("Checkout request ID", checkoutRequestId, 128);
-  const shortcode = client.credentials.shortcode;
+  const shortcode = client.shortcode();
   const timestamp = currentTimestamp();
-  const password = generateStkPassword(
-    shortcode,
-    client.credentials.passkey,
-    timestamp
-  );
+  const password = client.stkPassword(timestamp);
 
   return client.postWithoutIdempotency<StkPushResponse>("/mpesa/stkpush/v1/query", {
     BusinessShortCode: shortcode,

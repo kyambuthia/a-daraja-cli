@@ -24,7 +24,7 @@ export async function b2cPayment(
     SecurityCredential: securityCredential,
     CommandID: b2cCommandValue(command),
     Amount: String(options.amount),
-    PartyA: client.credentials.shortcode,
+    PartyA: client.shortcode(),
     PartyB: phone,
     Remarks: options.remarks ?? "Payment",
     QueueTimeOutURL: options.timeoutUrl,

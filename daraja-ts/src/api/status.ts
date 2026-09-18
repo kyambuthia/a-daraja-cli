@@ -21,7 +21,7 @@ export async function queryStatus(
     SecurityCredential: securityCredential,
     CommandID: "TransactionStatusQuery",
     TransactionID: options.transactionId,
-    PartyA: client.credentials.shortcode,
+    PartyA: client.shortcode(),
     IdentifierType: "1",
     ResultURL: options.resultUrl,
     QueueTimeOutURL: options.timeoutUrl,

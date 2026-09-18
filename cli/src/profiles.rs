@@ -1,5 +1,6 @@
 use daraja_rs::config::{
-    Credentials, decrypt_credentials, encrypt_credentials, extract_key_from_sdk_key,
+    Credentials, daraja_config_dir, decrypt_credentials, encrypt_credentials,
+    extract_key_from_sdk_key,
 };
 use daraja_rs::error::DarajaError;
 use daraja_rs::types::Environment;
@@ -45,9 +46,7 @@ pub struct ProfileRegistry {
 }
 
 fn config_dir() -> Result<PathBuf, DarajaError> {
-    let home = std::env::var("HOME")
-        .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
-    Ok(PathBuf::from(format!("{home}/.config/daraja")))
+    daraja_config_dir()
 }
 
 pub fn profiles_registry_path() -> Result<PathBuf, DarajaError> {
@@ -238,8 +237,6 @@ pub fn legacy_registry() -> Result<ProfileRegistry, DarajaError> {
     let encrypted = std::fs::read(&creds_path)
         .map_err(|e| DarajaError::Config(format!("failed to read legacy credentials: {e}")))?;
     let creds = decrypt_credentials(&encrypted, &key_bytes)?;
-    let creds_path = profile_credentials_path("personal")?;
-
     let profile = Profile {
         name: "personal".into(),
         profile_type: ProfileType::Personal,

@@ -22,6 +22,7 @@ pub struct B2cPaymentOptions {
     pub occasion: String,
     pub result_url: String,
     pub timeout_url: String,
+    pub idempotency_key: String,
 }
 
 impl B2cPaymentOptions {
@@ -30,6 +31,7 @@ impl B2cPaymentOptions {
         amount: u64,
         result_url: impl Into<String>,
         timeout_url: impl Into<String>,
+        idempotency_key: impl Into<String>,
     ) -> Self {
         Self {
             phone: phone.into(),
@@ -39,6 +41,7 @@ impl B2cPaymentOptions {
             occasion: String::new(),
             result_url: result_url.into(),
             timeout_url: timeout_url.into(),
+            idempotency_key: idempotency_key.into(),
         }
     }
 
@@ -72,7 +75,7 @@ pub async fn b2c_payment_with_options(
         &options.occasion,
         &options.result_url,
         &options.timeout_url,
-        RequestOptions::default(),
+        RequestOptions::with_idempotency_key(&options.idempotency_key),
     )
     .await
 }
@@ -92,6 +95,7 @@ pub struct B2cResponse {
 
 /// Send a B2C payment.
 #[allow(clippy::too_many_arguments)]
+#[deprecated(note = "use b2c_payment_with_idempotency_key")]
 pub async fn b2c_payment(
     client: &DarajaClient,
     phone: &str,
@@ -102,7 +106,7 @@ pub async fn b2c_payment(
     result_url: &str,
     timeout_url: &str,
 ) -> Result<B2cResponse, DarajaError> {
-    send_b2c_payment(
+    let _ = (
         client,
         phone,
         amount,
@@ -111,9 +115,8 @@ pub async fn b2c_payment(
         occasion,
         result_url,
         timeout_url,
-        RequestOptions::default(),
-    )
-    .await
+    );
+    Err(DarajaError::MissingIdempotencyKey)
 }
 
 /// Send a B2C payment using a stable business-operation idempotency key.
@@ -224,6 +227,7 @@ mod tests {
             100,
             "https://example.com/result",
             "https://example.com/timeout",
+            "test:b2c:options",
         )
         .with_command(B2cCommand::SalaryPayment)
         .with_remarks("Payroll")
@@ -268,7 +272,7 @@ mod tests {
         };
         let client = DarajaClient::new(creds, Environment::Sandbox)
             .unwrap()
-            .without_idempotency();
+            .dangerously_without_idempotency_for_testing();
 
         let credential = initiator_security_credential(&client).unwrap();
         let plain = base64::Engine::encode(
@@ -326,10 +330,11 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
 
-            let resp = b2c_payment(
+            let resp = b2c_payment_with_idempotency_key(
                 &client,
                 "254712345678",
                 500,
@@ -338,6 +343,7 @@ mod tests {
                 "June",
                 "https://example.com/result",
                 "https://example.com/timeout",
+                "test:b2c:request-body",
             )
             .await
             .unwrap();

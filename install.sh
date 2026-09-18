@@ -2,7 +2,7 @@
 set -eu
 
 # pesaraja installer — one command to get the M-Pesa CLI
-# curl -fsSL https://raw.githubusercontent.com/kyambuthia/pesaraja/trunk/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/kyambuthia/a-daraja-cli/trunk/install.sh | bash
 
 BOLD=""; GREEN=""; YELLOW=""; RED=""; NC=""
 if [ -t 1 ]; then
@@ -29,7 +29,7 @@ case "$ARCH" in
     *) err "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-REPO="kyambuthia/pesaraja"
+REPO="kyambuthia/a-daraja-cli"
 VERSION="${PESARAJA_VERSION:-}"
 TARBALL="pesaraja-${VERSION}-${OS}-${ARCH}.tar.gz"
 RELEASE_URL="https://github.com/${REPO}/releases/download/${VERSION}/${TARBALL}"
@@ -69,7 +69,9 @@ if [ -n "$VERSION" ] \
     if curl -fsSL "$RELEASE_URL" -o "${TMP_DIR}/${TARBALL}" 2>/dev/null \
         && curl -fsSL "${RELEASE_URL}.sha256" -o "${TMP_DIR}/${TARBALL}.sha256" 2>/dev/null \
         && verify_checksum "${TARBALL}.sha256" \
-        && [ "$(tar -tzf "${TMP_DIR}/${TARBALL}")" = "pesaraja" ]; then
+        && [ "$(tar -tzf "${TMP_DIR}/${TARBALL}" | wc -l | tr -d ' ')" = "2" ] \
+        && tar -tzf "${TMP_DIR}/${TARBALL}" | grep -qx pesaraja \
+        && tar -tzf "${TMP_DIR}/${TARBALL}" | grep -qx LICENSE; then
         tar -xzf "${TMP_DIR}/${TARBALL}" -C "$TMP_DIR"
         install -m 755 "${TMP_DIR}/pesaraja" "$BIN"
         info "Installed checksum-verified binary to ${BIN}"

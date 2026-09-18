@@ -29,6 +29,7 @@ pub struct ReversalResponse {
 
 /// Reverse a completed transaction.
 #[allow(clippy::too_many_arguments)]
+#[deprecated(note = "use reverse_transaction_with_idempotency_key")]
 pub async fn reverse_transaction(
     client: &DarajaClient,
     transaction_id: &str,
@@ -40,7 +41,7 @@ pub async fn reverse_transaction(
     result_url: &str,
     timeout_url: &str,
 ) -> Result<ReversalResponse, DarajaError> {
-    reverse_transaction_with_options(
+    let _ = (
         client,
         transaction_id,
         amount,
@@ -50,9 +51,8 @@ pub async fn reverse_transaction(
         occasion,
         result_url,
         timeout_url,
-        RequestOptions::default(),
-    )
-    .await
+    );
+    Err(DarajaError::MissingIdempotencyKey)
 }
 
 /// Reverse a transaction using a stable business-operation idempotency key.
@@ -141,7 +141,7 @@ mod tests {
 
     #[cfg(test)]
     mod async_tests {
-        use super::super::{REVERSAL_PATH, reverse_transaction};
+        use super::super::{REVERSAL_PATH, reverse_transaction_with_idempotency_key};
         use crate::client::DarajaClient;
         use crate::config::Credentials;
         use crate::types::Environment;
@@ -218,10 +218,11 @@ mod tests {
 
             let client = DarajaClient::new(test_credentials(), Environment::Sandbox)
                 .unwrap()
-                .with_base_url(server.uri())
-                .without_idempotency();
+                .with_test_base_url(server.uri())
+                .unwrap()
+                .dangerously_without_idempotency_for_testing();
 
-            let resp = reverse_transaction(
+            let resp = reverse_transaction_with_idempotency_key(
                 &client,
                 "QEJ78H8JKR",
                 100,
@@ -231,6 +232,7 @@ mod tests {
                 "Refund",
                 "https://example.com/result",
                 "https://example.com/timeout",
+                "test:reversal:request-body",
             )
             .await
             .unwrap();

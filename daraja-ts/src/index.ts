@@ -2,6 +2,7 @@ export { Daraja } from "./daraja.js";
 export { DarajaClient } from "./client.js";
 export type { DarajaClientOptions, RequestOptions } from "./client.js";
 export { DarajaError } from "./error.js";
+export type { DarajaErrorKind } from "./error.js";
 export type {
   BalanceOptions,
   B2cCommand,
@@ -37,7 +38,6 @@ export type {
   MatchedStkCallback,
 } from "./webhook.js";
 export { certificatePath, ensureSandboxCertificate } from "./certs.js";
-export { idempotencyKeyForBody } from "./idempotency.js";
 export type { AcquireResult, IdempotencyBackend } from "./idempotency.js";
 export { normalizePhone } from "./security.js";
 export {

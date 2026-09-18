@@ -37,6 +37,12 @@ pub enum DarajaError {
     #[error("Network error: {0}")]
     Network(String),
 
+    #[error("Request outcome is unknown: {0} Reconcile before retrying.")]
+    RequestOutcomeUnknown(String),
+
+    #[error("Provider outcome was received but local safety state could not be persisted: {0}")]
+    LocalStateUncertain(String),
+
     #[error("Daraja API request failed (HTTP {status}, code {code}): {message}")]
     Api {
         status: u16,
@@ -67,6 +73,9 @@ pub enum DarajaError {
     #[error("Payment outcome is unknown; reconcile the transaction before retrying.")]
     IdempotencyOutcomeUnknown,
 
+    #[error("A stable business-operation idempotency key is required for this request.")]
+    MissingIdempotencyKey,
+
     #[error("Invalid payment state transition: {from} -> {to}")]
     InvalidPaymentTransition { from: String, to: String },
 
@@ -81,6 +90,51 @@ pub enum DarajaError {
 
     #[error("SDK key has wrong environment prefix. Expected '{expected}', got '{actual}'.")]
     WrongEnvironmentPrefix { expected: String, actual: String },
+}
+
+impl DarajaError {
+    /// Stable machine-readable error code used by the CLI JSON contract.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::AuthFailed(_) => "auth_failed",
+            Self::PhoneNotRegistered(_) => "phone_not_registered",
+            Self::StkCancelled => "stk_cancelled",
+            Self::StkTimeout => "stk_timeout",
+            Self::InsufficientFunds(_) => "insufficient_funds",
+            Self::RateLimited(_) => "rate_limited",
+            Self::UnknownApiError(_) => "unknown_api_error",
+            Self::Config(_) => "configuration_error",
+            Self::Encryption(_) => "encryption_error",
+            Self::Network(_) => "network_error",
+            Self::RequestOutcomeUnknown(_) => "request_outcome_unknown",
+            Self::LocalStateUncertain(_) => "local_state_uncertain",
+            Self::Api { .. } => "api_error",
+            Self::InvalidCallbackSignature => "invalid_callback_signature",
+            Self::InvalidCallback(_) => "invalid_callback_payload",
+            Self::CallbackVerificationUnavailable => "callback_verification_unavailable",
+            Self::IdempotencyConflict => "idempotency_conflict",
+            Self::IdempotencyKeyReused => "idempotency_key_reused",
+            Self::IdempotencyPreviousFailed => "idempotency_previous_failed",
+            Self::IdempotencyOutcomeUnknown => "idempotency_outcome_unknown",
+            Self::MissingIdempotencyKey => "missing_idempotency_key",
+            Self::InvalidPaymentTransition { .. } => "invalid_payment_transition",
+            Self::TransactionNotFound(_) => "transaction_not_found",
+            Self::ReversalFailed(_) => "reversal_failed",
+            Self::MissingApiKey => "missing_api_key",
+            Self::WrongEnvironmentPrefix { .. } => "wrong_environment_prefix",
+        }
+    }
+
+    /// True only when a money-moving request may have crossed the network or
+    /// its durable outcome record could not be saved.
+    pub fn is_ambiguous_outcome(&self) -> bool {
+        matches!(
+            self,
+            Self::RequestOutcomeUnknown(_)
+                | Self::LocalStateUncertain(_)
+                | Self::IdempotencyOutcomeUnknown
+        )
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +188,8 @@ mod tests {
             DarajaError::Config("test".into()),
             DarajaError::Encryption("test".into()),
             DarajaError::Network("test".into()),
+            DarajaError::RequestOutcomeUnknown("test".into()),
+            DarajaError::LocalStateUncertain("test".into()),
             DarajaError::Api {
                 status: 400,
                 code: "invalid_request".into(),
@@ -146,6 +202,7 @@ mod tests {
             DarajaError::IdempotencyKeyReused,
             DarajaError::IdempotencyPreviousFailed,
             DarajaError::IdempotencyOutcomeUnknown,
+            DarajaError::MissingIdempotencyKey,
             DarajaError::InvalidPaymentTransition {
                 from: "created".into(),
                 to: "reversed".into(),
@@ -158,7 +215,7 @@ mod tests {
                 actual: "live".into(),
             },
         ];
-        assert_eq!(errors.len(), 23);
+        assert_eq!(errors.len(), 26);
     }
 
     #[test]

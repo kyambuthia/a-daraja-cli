@@ -217,7 +217,9 @@ const response = await daraja.prompt({
 console.log(response.CheckoutRequestID);
 ```
 
-`Daraja.fromEnv()` reads `DARAJA_KEY` first, then falls back to `~/.config/daraja/key`. The SDK decrypts `~/.config/daraja/credentials.enc`.
+`Daraja.fromEnv()` reads `DARAJA_KEY` first, then falls back to `key` in the
+platform config directory. The SDK decrypts `credentials.enc` in that same
+directory; `DARAJA_CONFIG_DIR` overrides the location.
 
 STK callback example:
 
@@ -258,9 +260,11 @@ If your application has an independently documented callback authenticator, use
 separate from parsing and matching. This does not replace replay protection or
 authoritative transaction reconciliation.
 
-For `prompt`, `send`, and `refund`, provide a stable `idempotencyKey` (or
+For SDK `prompt`, `send`, and `refund`, provide a stable `idempotencyKey` (or
 `--idempotency-key` in the CLI) derived from your order, disbursement, or
-reversal record. Reusing a key with different parameters is rejected. If the
+reversal record. It is mandatory in both SDKs and in the production CLI; the
+sandbox CLI generates and persists a key when omitted. Reusing a key with
+different parameters is rejected. If the
 SDK reports an unknown outcome, query/reconcile the transaction rather than
 resending it with a new key.
 
@@ -280,7 +284,7 @@ let daraja = Daraja::from_env()?;
 let client = daraja.client();
 ```
 
-The Rust SDK currently exposes lower-level API functions through `daraja_rs::api::*`. `Daraja::from_env()` requires `DARAJA_KEY`; `Daraja::from_key(...)` decrypts `~/.config/daraja/credentials.enc`.
+The Rust SDK currently exposes lower-level API functions through `daraja_rs::api::*`. `Daraja::from_env()` requires `DARAJA_KEY`; `Daraja::from_key(...)` decrypts `credentials.enc` in the platform config directory.
 
 Typed options are available for common requests to avoid long positional
 argument lists:
@@ -288,7 +292,12 @@ argument lists:
 ```rust
 use daraja_rs::api::stk_push::{stk_push_with_options, StkPushOptions};
 
-let options = StkPushOptions::new("254712345678", 500, "https://example.com/callback")
+let options = StkPushOptions::new(
+    "254712345678",
+    500,
+    "https://example.com/callback",
+    "order:ORDER-123:stk",
+)
     .with_reference("ORDER-123");
 let response = stk_push_with_options(daraja.client(), &options).await?;
 ```
@@ -307,4 +316,4 @@ Common issues:
 - Wrong key for encrypted credentials: export the key printed by `pesaraja export-key` or rerun `pesaraja init`.
 - Sandbox passkey mismatch: rerun `pesaraja init`; sandbox uses the fixed public passkey.
 - Missing initiator credentials: rerun `pesaraja init` and configure initiator details.
-- Missing production certificate: save `production.cer` under `~/.config/daraja/` or set `DARAJA_CERT_PATH`.
+- Missing production certificate: save `production.cer` in the platform config directory or set `DARAJA_CERT_PATH`.

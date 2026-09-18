@@ -68,7 +68,8 @@ supported because shell history and process listings can expose them.
 
 ## Stored Files
 
-`pesaraja init` writes under `~/.config/daraja/`:
+`pesaraja init` writes to the platform config directory (see
+[install.md](install.md)); `DARAJA_CONFIG_DIR` overrides it:
 
 - `key`: local SDK key, written owner-readable.
 - `credentials.enc`: encrypted credential blob used by SDK constructors.
@@ -85,7 +86,7 @@ that is accessible to other users. In CI or deployed environments, prefer
 For production B2C, transaction status, balance, and reversal operations, save the production certificate as:
 
 ```bash
-~/.config/daraja/production.cer
+$DARAJA_CONFIG_DIR/production.cer
 ```
 
 or set:

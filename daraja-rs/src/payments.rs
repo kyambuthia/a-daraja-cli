@@ -17,6 +17,35 @@ pub enum PaymentStatus {
     Reversed,
 }
 
+/// Money-moving operation represented by a payment record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaymentKind {
+    Stk,
+    B2c,
+    Reversal,
+}
+
+impl PaymentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stk => "stk",
+            Self::B2c => "b2c",
+            Self::Reversal => "reversal",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, DarajaError> {
+        match value {
+            "stk" => Ok(Self::Stk),
+            "b2c" => Ok(Self::B2c),
+            "reversal" => Ok(Self::Reversal),
+            other => Err(DarajaError::Config(format!(
+                "unknown persisted payment kind: {other}"
+            ))),
+        }
+    }
+}
+
 impl PaymentStatus {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -69,6 +98,7 @@ impl PaymentStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewPayment {
     pub id: String,
+    pub kind: PaymentKind,
     pub environment: String,
     pub shortcode: String,
     pub amount_kes: u64,
@@ -81,6 +111,7 @@ pub struct NewPayment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Payment {
     pub id: String,
+    pub kind: PaymentKind,
     pub environment: String,
     pub shortcode: String,
     pub amount_kes: u64,
@@ -89,6 +120,8 @@ pub struct Payment {
     pub idempotency_key: Option<String>,
     pub merchant_request_id: Option<String>,
     pub checkout_request_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub originator_conversation_id: Option<String>,
     pub transaction_id: Option<String>,
     pub receipt_number: Option<String>,
     pub status: PaymentStatus,
@@ -110,6 +143,7 @@ impl PaymentStore {
             "PRAGMA busy_timeout = 5000;
              CREATE TABLE IF NOT EXISTS payments (
                 id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'stk',
                 environment TEXT NOT NULL,
                 shortcode TEXT NOT NULL,
                 amount_kes INTEGER NOT NULL CHECK (amount_kes > 0),
@@ -118,6 +152,8 @@ impl PaymentStore {
                 idempotency_key TEXT UNIQUE,
                 merchant_request_id TEXT,
                 checkout_request_id TEXT,
+                conversation_id TEXT,
+                originator_conversation_id TEXT,
                 transaction_id TEXT,
                 receipt_number TEXT,
                 status TEXT NOT NULL,
@@ -139,6 +175,9 @@ impl PaymentStore {
                 ON payment_events(payment_id, id);",
         )
         .map_err(|error| DarajaError::Config(format!("initialize payment store: {error}")))?;
+        ensure_column(&conn, "payments", "kind", "TEXT NOT NULL DEFAULT 'stk'")?;
+        ensure_column(&conn, "payments", "conversation_id", "TEXT")?;
+        ensure_column(&conn, "payments", "originator_conversation_id", "TEXT")?;
         Ok(Self { conn })
     }
 
@@ -165,11 +204,12 @@ impl PaymentStore {
             .map_err(|error| DarajaError::Config(format!("begin payment create: {error}")))?;
         tx.execute(
             "INSERT INTO payments (
-                id, environment, shortcode, amount_kes, phone, reference,
+                id, kind, environment, shortcode, amount_kes, phone, reference,
                 idempotency_key, status, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
             params![
                 input.id,
+                input.kind.as_str(),
                 input.environment,
                 input.shortcode,
                 input.amount_kes as i64,
@@ -284,12 +324,43 @@ impl PaymentStore {
         })
     }
 
+    /// Attach asynchronous conversation identifiers returned by B2C and
+    /// reversal endpoints.
+    pub fn attach_conversation_ids(
+        &mut self,
+        payment_id: &str,
+        conversation_id: Option<&str>,
+        originator_conversation_id: Option<&str>,
+    ) -> Result<Payment, DarajaError> {
+        let now = unix_now();
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE payments SET
+                    conversation_id = COALESCE(?2, conversation_id),
+                    originator_conversation_id = COALESCE(?3, originator_conversation_id),
+                    updated_at = ?4
+                 WHERE id = ?1",
+                params![payment_id, conversation_id, originator_conversation_id, now],
+            )
+            .map_err(|error| {
+                DarajaError::Config(format!("attach conversation identifiers: {error}"))
+            })?;
+        if changed == 0 {
+            return Err(DarajaError::TransactionNotFound(payment_id.into()));
+        }
+        self.get(payment_id)?.ok_or_else(|| {
+            DarajaError::Config("payment identifiers saved but could not be reloaded".into())
+        })
+    }
+
     /// Look up a payment by its durable identifier.
     pub fn get(&self, payment_id: &str) -> Result<Option<Payment>, DarajaError> {
         self.conn
             .query_row(
-                "SELECT id, environment, shortcode, amount_kes, phone, reference,
+                "SELECT id, kind, environment, shortcode, amount_kes, phone, reference,
                         idempotency_key, merchant_request_id, checkout_request_id,
+                        conversation_id, originator_conversation_id,
                         transaction_id, receipt_number, status, created_at, updated_at
                  FROM payments WHERE id = ?1",
                 params![payment_id],
@@ -306,8 +377,9 @@ impl PaymentStore {
     ) -> Result<Option<Payment>, DarajaError> {
         self.conn
             .query_row(
-                "SELECT id, environment, shortcode, amount_kes, phone, reference,
+                "SELECT id, kind, environment, shortcode, amount_kes, phone, reference,
                         idempotency_key, merchant_request_id, checkout_request_id,
+                        conversation_id, originator_conversation_id,
                         transaction_id, receipt_number, status, created_at, updated_at
                  FROM payments WHERE idempotency_key = ?1",
                 params![idempotency_key],
@@ -349,8 +421,9 @@ impl PaymentStore {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT id, environment, shortcode, amount_kes, phone, reference,
+                "SELECT id, kind, environment, shortcode, amount_kes, phone, reference,
                         idempotency_key, merchant_request_id, checkout_request_id,
+                        conversation_id, originator_conversation_id,
                         transaction_id, receipt_number, status, created_at, updated_at
                  FROM payments
                  WHERE (?1 IS NULL OR status = ?1)
@@ -440,29 +513,66 @@ impl PaymentStore {
 }
 
 fn payment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Payment> {
-    let amount_kes: i64 = row.get(3)?;
+    let amount_kes: i64 = row.get(4)?;
     Ok(Payment {
         id: row.get(0)?,
-        environment: row.get(1)?,
-        shortcode: row.get(2)?,
-        amount_kes: amount_kes as u64,
-        phone: row.get(4)?,
-        reference: row.get(5)?,
-        idempotency_key: row.get(6)?,
-        merchant_request_id: row.get(7)?,
-        checkout_request_id: row.get(8)?,
-        transaction_id: row.get(9)?,
-        receipt_number: row.get(10)?,
-        status: PaymentStatus::parse(&row.get::<_, String>(11)?).map_err(|error| {
+        kind: PaymentKind::parse(&row.get::<_, String>(1)?).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                11,
+                1,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
         })?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        environment: row.get(2)?,
+        shortcode: row.get(3)?,
+        amount_kes: amount_kes as u64,
+        phone: row.get(5)?,
+        reference: row.get(6)?,
+        idempotency_key: row.get(7)?,
+        merchant_request_id: row.get(8)?,
+        checkout_request_id: row.get(9)?,
+        conversation_id: row.get(10)?,
+        originator_conversation_id: row.get(11)?,
+        transaction_id: row.get(12)?,
+        receipt_number: row.get(13)?,
+        status: PaymentStatus::parse(&row.get::<_, String>(14)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                14,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
     })
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), DarajaError> {
+    let mut statement = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| DarajaError::Config(format!("inspect payment schema: {error}")))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| DarajaError::Config(format!("read payment schema: {error}")))?;
+    for existing in columns {
+        if existing
+            .map_err(|error| DarajaError::Config(format!("decode payment schema: {error}")))?
+            == column
+        {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )
+    .map_err(|error| DarajaError::Config(format!("migrate payment schema: {error}")))?;
+    Ok(())
 }
 
 fn unix_now() -> i64 {
@@ -485,6 +595,7 @@ mod tests {
     fn payment() -> NewPayment {
         NewPayment {
             id: "pay_001".into(),
+            kind: PaymentKind::Stk,
             environment: "sandbox".into(),
             shortcode: "174379".into(),
             amount_kes: 500,

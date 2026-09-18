@@ -1,7 +1,7 @@
 // Encrypted credential management.
 //
 // During `pesaraja init`, Daraja credentials (consumer key, secret, passkey, etc.)
-// are encrypted with AES-256-GCM and stored at `~/.config/daraja/credentials.enc`.
+// are encrypted with AES-256-GCM and stored in the platform config directory.
 //
 // The SDK key (`dsk_test_...` / `dsk_live_...`) IS the AES decryption key,
 // base64-encoded with an environment prefix.
@@ -15,7 +15,41 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use rand::RngCore;
 use rand::rngs::OsRng;
+use std::path::PathBuf;
 use zeroize::Zeroizing;
+
+/// Return the application configuration directory.
+///
+/// `DARAJA_CONFIG_DIR` takes precedence. Otherwise this follows the platform's
+/// conventional config root (`XDG_CONFIG_HOME` on Unix and `APPDATA` on Windows).
+pub fn daraja_config_dir() -> Result<PathBuf, DarajaError> {
+    if let Some(path) = std::env::var_os("DARAJA_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path).join("daraja"));
+    }
+
+    #[cfg(not(windows))]
+    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path).join("daraja"));
+    }
+
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DarajaError::Config("could not determine the user config directory".into())
+        })?;
+    #[cfg(windows)]
+    return Ok(PathBuf::from(home)
+        .join("AppData")
+        .join("Roaming")
+        .join("daraja"));
+    #[cfg(not(windows))]
+    Ok(PathBuf::from(home).join(".config").join("daraja"))
+}
 
 /// Internal struct for JSON (de)serialization of credentials (avoids requiring
 /// Serialize/Deserialize on the public Zeroizing-wrapped Credentials).

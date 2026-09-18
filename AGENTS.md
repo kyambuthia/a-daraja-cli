@@ -1,8 +1,8 @@
-# Pesaraja Agent Guide
+# A Daraja CLI Agent Guide
 
 ## Project shape
 
-Pesaraja is a Rust + TypeScript monorepo for Safaricom Daraja/M-Pesa:
+A Daraja CLI is a Rust + TypeScript monorepo for Safaricom Daraja/M-Pesa:
 
 - `daraja-rs/` — Rust SDK and Daraja API primitives.
 - `cli/` — the `pesaraja` Rust CLI.
