@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import {
+  c2bCallbackDeduplicationKey,
   parseC2bConfirmation,
   parseStkCallback,
   matchStkCallback,
@@ -105,20 +105,29 @@ describe("webhook", () => {
     expect(confirmation.TransID).toBe("QEJ78H8JKR");
   });
 
-  it("matches the shared callback fixture", () => {
+  it("matches the shared callback fixture", async () => {
     const fixture = JSON.parse(
-      readFileSync(
-        fileURLToPath(
-          new URL("../../daraja-rs/fixtures/callback-contract.json", import.meta.url)
-        ),
+      await readFile(
+        new URL("../../daraja-rs/fixtures/callback-contract.json", import.meta.url),
         "utf8"
       )
     ) as { c2b_confirmation: unknown; stk_callback: unknown };
-    expect(parseC2bConfirmation(fixture.c2b_confirmation).BillRefNumber).toBe("ORDER-123");
+    const confirmation = parseC2bConfirmation(fixture.c2b_confirmation);
+    expect(confirmation.TransID).toBe("QEJ78H8JKR");
+    expect(confirmation.BillRefNumber).toBe("ORDER-123");
+    expect(c2bCallbackDeduplicationKey(confirmation)).toBe("c2b:transaction:QEJ78H8JKR");
     const callback = parseStkCallback(fixture.stk_callback);
-    expect(
-      matchStkCallback(callback, { checkoutRequestId: "ws_CO_1", amount: 500 }).receiptNumber
-    ).toBe("QAB123");
+    expect(callback.MerchantRequestID).toBe("mr-1");
+    expect(callback.CheckoutRequestID).toBe("ws_CO_1");
+    expect(stkCallbackPaid(callback)).toBe(true);
+    const matched = matchStkCallback(callback, {
+      checkoutRequestId: "ws_CO_1",
+      merchantRequestId: "mr-1",
+      amount: 500,
+    });
+    expect(matched.receiptNumber).toBe("QAB123");
+    expect(matched.phoneNumber).toBe("254712345678");
+    expect(stkCallbackDeduplicationKey(callback)).toBe("stk:receipt:QAB123");
   });
 
   it("fails closed when callback cryptographic verification is unavailable", () => {
