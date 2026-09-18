@@ -9,7 +9,7 @@ pub(crate) use crate::args::{
     SetupProfileType,
 };
 pub(crate) use crate::common::{
-    DEFAULT_CALLBACK, DEFAULT_RESULT_URL, DEFAULT_TIMEOUT_URL, configured_environment, confirm_payment, load_daraja,
+    DEFAULT_CALLBACK, configured_environment, confirm_payment, load_daraja,
     load_daraja_with_base_url, load_shortcode, open_payment_store, operation_idempotency_key,
     persist_payment_error, print_banner, print_dry_run, resolve_async_urls, resolve_callback_url,
     theme, validate_loopback_base_url,
@@ -19,7 +19,7 @@ pub(crate) use crate::creds::{
     key_path, key_source_label, load_credentials, load_sdk_key, persist_personal_configuration,
     print_init_success, prompt_credentials_interactive, prompt_existing_credentials_action,
     sdk_key_environment, try_load_existing_credentials, validate_credentials_for_environment,
-    validate_shortcode, SANDBOX_PASSKEY,
+    validate_shortcode,
 };
 pub(crate) use crate::input::parse_kes_amount;
 pub(crate) use crate::output;
