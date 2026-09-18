@@ -18,6 +18,8 @@ Notable changes to A Daraja CLI are recorded here. This project follows
 - Node.js support starts at Node 22.
 - Configuration storage follows platform conventions and supports
   `DARAJA_CONFIG_DIR`.
+- The `pesaraja` CLI monolith (`cli/src/main.rs`) is split into per-command
+  modules (`args`, `creds`, `common`, `cmd_*`) with no behavior change.
 
 ### Security
 

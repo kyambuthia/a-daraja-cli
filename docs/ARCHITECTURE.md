@@ -15,6 +15,28 @@ guarantees.
 The Rust and TypeScript SDKs intentionally share the same Daraja field names,
 credential blob format, validation contract, and environment prefixes.
 
+## CLI layout
+
+`main.rs` is a thin entry point: argument parsing plus dispatch to
+per-command modules. Shared imports live in `prelude.rs` (glob only, so
+per-module imports stay warning-clean under `clippy -D warnings`).
+
+| Module | Responsibility |
+| --- | --- |
+| `args.rs` | Clap `Cli`, `Commands`, and option types. |
+| `creds.rs` | Credential load/save, init validation, interactive prompts. |
+| `common.rs` | Daraja client loading, payment store, idempotency helpers, URL guards. |
+| `cmd_init.rs` | `init`, `setup`, `use`, `config`, `export-key`. |
+| `cmd_collect.rs` | `prompt`, `prompt-status`. |
+| `cmd_money.rs` | `simulate`, `send`, `query`, `balance`, `refund`. |
+| `cmd_c2b.rs` | `webhook`, `register`. |
+| `cmd_doctor.rs` | `doctor` pre-flight checks. |
+| `payments.rs` | `payments` ledger inspection. |
+| `receive.rs` / `simulator.rs` | Local callback server and deterministic simulator. |
+| `input.rs` / `output.rs` | Amount parsing; human/JSON output and exit codes. |
+| `profiles.rs` | Named merchant profiles. |
+| `legacy_tests.rs` | CLI unit tests (temporary home pending per-module placement). |
+
 ## Request lifecycle
 
 Mutating API requests follow this sequence:
