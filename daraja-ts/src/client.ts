@@ -1,7 +1,6 @@
 import { TokenManager } from "./auth.js";
 import { certificatePem } from "./certs.js";
 import {
-  apiError,
   DarajaError,
   localStateUncertain,
   requestOutcomeUnknown,
@@ -14,6 +13,11 @@ import {
   validateIdempotencyKey,
 } from "./idempotency.js";
 import { generateSecurityCredential, generateStkPassword } from "./security.js";
+import {
+  apiErrorFromBody,
+  parseIdempotentJsonBody,
+  parsePlainJsonBody,
+} from "./response.js";
 import type { Credentials, Environment } from "./types.js";
 import { environmentBaseUrl } from "./types.js";
 
@@ -196,12 +200,12 @@ export class DarajaClient {
           throw localStateUncertain(`record definitive provider failure: ${persistenceError}`);
         }
       }
-      throw apiError(response.status, text);
+      throw apiErrorFromBody(response.status, text);
     }
 
     let parsed: T;
     try {
-      parsed = JSON.parse(text) as T;
+      parsed = parseIdempotentJsonBody<T>(text);
     } catch (error) {
       if (this.idempotencyStore) {
         try {
@@ -210,7 +214,7 @@ export class DarajaClient {
           throw localStateUncertain(`record invalid provider response: ${persistenceError}`);
         }
       }
-      throw requestOutcomeUnknown(`provider returned invalid JSON: ${error}`);
+      throw error;
     }
 
     if (this.idempotencyStore) {
@@ -234,15 +238,9 @@ export class DarajaClient {
     const response = await this.sendPost(url, bodyBytes, undefined, false);
     const text = await response.text();
     if (!response.ok) {
-      throw apiError(response.status, text);
+      throw apiErrorFromBody(response.status, text);
     }
-    try {
-      return JSON.parse(text) as T;
-    } catch (error) {
-      throw new DarajaError(`Network error: invalid JSON response: ${error}`, {
-        kind: "network",
-      });
-    }
+    return parsePlainJsonBody<T>(text);
   }
 
   private async sendPost(
