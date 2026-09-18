@@ -5,10 +5,10 @@ changes should be small, testable, and explicit about failure semantics.
 
 ## Development setup
 
-Requirements are Rust 1.85 and Node.js 22 or 24.
+Requirements are Rust 1.88.0 (pinned in rust-toolchain.toml) and Node.js 22 or 24.
 
 ```bash
-cargo test --workspace
+cargo test --workspace --locked
 npm ci
 npm test
 npm run build
