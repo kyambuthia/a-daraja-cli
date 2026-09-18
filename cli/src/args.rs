@@ -301,7 +301,7 @@ pub(crate) enum PaymentCommands {
         #[arg(long)]
         id: String,
     },
-    /// Query Daraja and apply the authoritative STK result.
+    /// Query Daraja and apply the authoritative STK result (persisted STK records only).
     Reconcile {
         /// Local payment identifier.
         #[arg(long)]

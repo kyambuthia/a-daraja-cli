@@ -1,7 +1,7 @@
 use crate::{PaymentCommands, load_daraja_with_base_url, open_payment_store, output};
 use daraja_rs::api::stk_push::reconcile_stk_payment;
 use daraja_rs::error::DarajaError;
-use daraja_rs::payments::{Payment, PaymentStatus};
+use daraja_rs::payments::{Payment, PaymentKind, PaymentStatus};
 
 pub async fn run(command: PaymentCommands, json: bool) -> Result<(), DarajaError> {
     match command {
@@ -74,6 +74,16 @@ pub async fn run(command: PaymentCommands, json: bool) -> Result<(), DarajaError
         }
         PaymentCommands::Reconcile { id, base_url } => {
             let mut store = open_payment_store()?;
+            let existing = store
+                .get(&id)?
+                .ok_or_else(|| DarajaError::TransactionNotFound(id.clone()))?;
+            if existing.kind != PaymentKind::Stk {
+                return Err(DarajaError::Config(format!(
+                    "reconcile supports only persisted stk records; payment {} is {} and its asynchronous results cannot be authoritatively reconciled by this command",
+                    existing.id,
+                    existing.kind.as_str()
+                )));
+            }
             let daraja = load_daraja_with_base_url(base_url.as_deref()).await?;
             let payment = reconcile_stk_payment(daraja.client(), &mut store, &id).await?;
             if json {

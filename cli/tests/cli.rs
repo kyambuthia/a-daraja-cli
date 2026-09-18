@@ -327,3 +327,55 @@ fn simulator_prompt_status_malformed_fails_closed_and_leaves_ledger_empty() {
 
     assert_eq!(ledger_as_json(directory.path()), serde_json::json!([]));
 }
+
+#[test]
+fn reconcile_rejects_b2c_and_reversal_records_without_credentials() {
+    use daraja_rs::payments::{NewPayment, PaymentKind, PaymentStore};
+
+    for (kind, id, idempotency_key) in [
+        (PaymentKind::B2c, "b2c-1", "test:reconcile:b2c:1"),
+        (PaymentKind::Reversal, "rev-1", "test:reconcile:rev:1"),
+    ] {
+        // Intentionally no key/credentials files: the kind guard must fire
+        // before credential loading or any provider network I/O.
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = PaymentStore::new(directory.path().join("payments.db")).unwrap();
+        store
+            .create(&NewPayment {
+                id: id.into(),
+                kind,
+                environment: "sandbox".into(),
+                shortcode: "600000".into(),
+                amount_kes: 100,
+                phone: Some("254712345678".into()),
+                reference: "Test".into(),
+                idempotency_key: Some(idempotency_key.into()),
+            })
+            .unwrap();
+        drop(store);
+
+        let output = command(directory.path())
+            .args(["--json", "payments", "reconcile", "--id", id])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "kind: {}", kind.as_str());
+        assert_eq!(output.status.code(), Some(2), "kind: {}", kind.as_str());
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "configuration_error");
+        assert_eq!(error["error"]["outcomeUnknown"], false);
+        let message = error["error"]["message"].as_str().unwrap().to_lowercase();
+        assert!(
+            message.contains(kind.as_str()),
+            "error names the record kind ({kind:?}): {message}"
+        );
+        assert!(
+            message.contains("asynchronous results cannot be authoritatively reconciled"),
+            "error states the async boundary: {message}"
+        );
+
+        // Unsupported kinds leave local state untouched.
+        let ledger = ledger_as_json(directory.path());
+        assert_eq!(ledger[0]["id"], id);
+        assert_eq!(ledger[0]["kind"], kind.as_str());
+    }
+}
