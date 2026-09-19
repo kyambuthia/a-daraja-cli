@@ -73,14 +73,11 @@ impl TokenManager {
             .base_url_override
             .as_deref()
             .unwrap_or_else(|| self.environment.base_url());
-        let url = format!(
-            "{}/oauth/v1/generate?grant_type=client_credentials",
-            base_url
-        );
+        let url = format!("{base_url}/oauth/v1/generate?grant_type=client_credentials");
 
         let credentials = format!("{}:{}", self.consumer_key, self.consumer_secret);
         let encoded = STANDARD.encode(credentials);
-        let auth = format!("Basic {}", encoded);
+        let auth = format!("Basic {encoded}");
 
         let mut attempt = 0u32;
         let response = loop {
@@ -130,7 +127,7 @@ impl TokenManager {
         let oauth: OAuthResponse = response
             .json()
             .await
-            .map_err(|e| DarajaError::AuthFailed(format!("failed to parse response: {}", e)))?;
+            .map_err(|e| DarajaError::AuthFailed(format!("failed to parse response: {e}")))?;
 
         let expires_in: i64 = oauth.expires_in.parse().map_err(|e| {
             DarajaError::AuthFailed(format!("invalid expires_in '{}': {}", oauth.expires_in, e))
@@ -236,7 +233,7 @@ mod tests {
         let sandbox_base = "https://sandbox.safaricom.co.ke";
         let auth_path = "/oauth/v1/generate?grant_type=client_credentials";
         assert_eq!(
-            format!("{}{}", sandbox_base, auth_path),
+            format!("{sandbox_base}{auth_path}"),
             "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
         );
     }
@@ -246,7 +243,7 @@ mod tests {
         let prod_base = "https://api.safaricom.co.ke";
         let auth_path = "/oauth/v1/generate?grant_type=client_credentials";
         assert_eq!(
-            format!("{}{}", prod_base, auth_path),
+            format!("{prod_base}{auth_path}"),
             "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
         );
     }

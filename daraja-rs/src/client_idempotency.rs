@@ -185,8 +185,10 @@ mod tests {
 
     #[test]
     fn persistence_failures_stay_ambiguous() {
-        let mut backend = MemoryBackend::default();
-        backend.fail_next_save = Some("disk full".to_string());
+        let backend = MemoryBackend {
+            fail_next_save: Some("disk full".to_string()),
+            ..Default::default()
+        };
         let store: Option<Mutex<Box<dyn IdempotencyBackend>>> = Some(Mutex::new(Box::new(backend)));
         let error = record_success(&store, "key", b"{}").unwrap_err();
         assert!(matches!(error, DarajaError::LocalStateUncertain(_)));

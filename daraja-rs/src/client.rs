@@ -164,7 +164,7 @@ impl DarajaClient {
             response
                 .json()
                 .await
-                .map_err(|e| DarajaError::Network(format!("failed to parse response: {}", e)))
+                .map_err(|e| DarajaError::Network(format!("failed to parse response: {e}")))
         } else {
             let status = response.status();
             let body = response
@@ -200,7 +200,7 @@ impl DarajaClient {
     ) -> Result<R, DarajaError> {
         let url = format!("{}{}", self.base_url(), path);
         let body_bytes = serde_json::to_vec(body)
-            .map_err(|e| DarajaError::Network(format!("serialize failed: {}", e)))?;
+            .map_err(|e| DarajaError::Network(format!("serialize failed: {e}")))?;
 
         let fingerprint = request_fingerprint(&body_bytes);
         let caller_key = options.idempotency_key;
@@ -275,7 +275,7 @@ impl DarajaClient {
     ) -> Result<R, DarajaError> {
         let url = format!("{}{}", self.base_url(), path);
         let body_bytes = serde_json::to_vec(body)
-            .map_err(|e| DarajaError::Network(format!("serialize failed: {}", e)))?;
+            .map_err(|e| DarajaError::Network(format!("serialize failed: {e}")))?;
         let response = self.send_post(&url, &body_bytes, None, false).await?;
         Self::handle_response(response).await
     }
@@ -331,7 +331,7 @@ impl DarajaClient {
             .header("Authorization", format!("Bearer {}", token.access_token))
             .send()
             .await
-            .map_err(|e| DarajaError::Network(format!("request failed: {}", e)))?;
+            .map_err(|e| DarajaError::Network(format!("request failed: {e}")))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED && !is_retry {
             self.token_manager.lock().await.invalidate();

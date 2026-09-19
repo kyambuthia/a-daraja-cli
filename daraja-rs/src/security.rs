@@ -70,7 +70,7 @@ fn rsa_public_key_from_pem(pem: &str) -> Result<RsaPublicKey, DarajaError> {
 ///
 /// Format: `base64(shortcode + passkey + timestamp)`
 pub fn generate_password(shortcode: &str, passkey: &str, timestamp: &str) -> String {
-    let concatenated = format!("{}{}{}", shortcode, passkey, timestamp);
+    let concatenated = format!("{shortcode}{passkey}{timestamp}");
     base64::Engine::encode(&base64::engine::general_purpose::STANDARD, concatenated)
 }
 
@@ -116,7 +116,7 @@ mod tests {
         let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &password)
             .expect("password should be valid base64");
 
-        let expected_plain = format!("{}{}{}", shortcode, passkey, timestamp);
+        let expected_plain = format!("{shortcode}{passkey}{timestamp}");
         assert_eq!(
             String::from_utf8(decoded).unwrap(),
             expected_plain,

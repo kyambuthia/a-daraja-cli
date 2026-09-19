@@ -6,9 +6,9 @@ pub(crate) fn confirm_payment(
     description: &str,
     skip: bool,
 ) -> Result<(), DarajaError> {
-    println!("  Phone: {}", phone);
-    println!("  Amount: KES {}", amount);
-    println!("  Description: {}", description);
+    println!("  Phone: {phone}");
+    println!("  Amount: KES {amount}");
+    println!("  Description: {description}");
     if skip {
         return Ok(());
     }

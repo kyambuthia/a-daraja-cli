@@ -81,7 +81,7 @@ pub fn generate_sdk_key(prefix: &str) -> String {
     let mut key = [0u8; 32];
     OsRng.fill_bytes(&mut key);
     let b64 = STANDARD.encode(key);
-    format!("dsk_{}_", prefix) + &b64
+    format!("dsk_{prefix}_") + &b64
 }
 
 /// Encrypt credentials with AES-256-GCM using the given 256-bit key.
@@ -98,7 +98,7 @@ pub fn encrypt_credentials(creds: &Credentials, key: &[u8; 32]) -> Result<Vec<u8
     };
 
     let plaintext = serde_json::to_vec(&plain)
-        .map_err(|e| DarajaError::Encryption(format!("serialize failed: {}", e)))?;
+        .map_err(|e| DarajaError::Encryption(format!("serialize failed: {e}")))?;
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
 
@@ -108,7 +108,7 @@ pub fn encrypt_credentials(creds: &Credentials, key: &[u8; 32]) -> Result<Vec<u8
 
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_ref())
-        .map_err(|e| DarajaError::Encryption(format!("encrypt failed: {}", e)))?;
+        .map_err(|e| DarajaError::Encryption(format!("encrypt failed: {e}")))?;
 
     let mut result = nonce_bytes.to_vec();
     result.extend(ciphertext);
@@ -134,7 +134,7 @@ pub fn decrypt_credentials(encrypted: &[u8], key: &[u8; 32]) -> Result<Credentia
     })?;
 
     let plain: PlainCreds = serde_json::from_slice(&plaintext)
-        .map_err(|e| DarajaError::Encryption(format!("deserialize failed: {}", e)))?;
+        .map_err(|e| DarajaError::Encryption(format!("deserialize failed: {e}")))?;
 
     Ok(Credentials {
         consumer_key: Zeroizing::new(plain.consumer_key),
@@ -162,7 +162,7 @@ pub fn extract_key_from_sdk_key(sdk_key: &str) -> Result<[u8; 32], DarajaError> 
 
     let bytes = STANDARD
         .decode(b64_part)
-        .map_err(|e| DarajaError::Config(format!("invalid base64 in SDK key: {}", e)))?;
+        .map_err(|e| DarajaError::Config(format!("invalid base64 in SDK key: {e}")))?;
 
     if bytes.len() != 32 {
         return Err(DarajaError::Config(
@@ -323,7 +323,7 @@ mod tests {
         // Base64 of 16 bytes = 24 chars, but we need 44 (for 32 bytes)
         let short_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 16]);
-        let result = extract_key_from_sdk_key(&format!("dsk_test_{}", short_b64));
+        let result = extract_key_from_sdk_key(&format!("dsk_test_{short_b64}"));
         assert!(result.is_err(), "16-byte key should be rejected (need 32)");
     }
 

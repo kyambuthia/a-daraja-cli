@@ -127,7 +127,7 @@ mod tests {
         match result {
             Err(DarajaError::Config(_)) => {}     // expected: no creds file
             Err(DarajaError::Encryption(_)) => {} // also possible
-            Err(e) => panic!("unexpected error: {:?}", e),
+            Err(e) => panic!("unexpected error: {e:?}"),
             Ok(_) => panic!("should fail without credentials file"),
         }
     }
