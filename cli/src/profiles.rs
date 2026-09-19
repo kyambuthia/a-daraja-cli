@@ -350,7 +350,13 @@ mod tests {
 
     fn temp_home() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("temp dir");
-        unsafe { std::env::set_var("HOME", dir.path()) };
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+            // `XDG_CONFIG_HOME` and `DARAJA_CONFIG_DIR` both take precedence over
+            // `HOME`, so isolate them too or CI's pre-set XDG_CONFIG_HOME leaks in.
+            std::env::set_var("XDG_CONFIG_HOME", dir.path().join(".config"));
+            std::env::remove_var("DARAJA_CONFIG_DIR");
+        }
         dir
     }
 
