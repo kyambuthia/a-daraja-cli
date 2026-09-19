@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  cli-assets:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            os: linux
+            arch: x86_64
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            os: linux
+            arch: aarch64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            os: darwin
+            arch: x86_64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os: darwin
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - run: rustup target add ${{ matrix.target }}
+      - name: Install Linux ARM64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu
+      - name: Build CLI archive
+        env:
+          TARGET: ${{ matrix.target }}
+          OS: ${{ matrix.os }}
+          ARCH: ${{ matrix.arch }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="pesaraja-${TAG}-${OS}-${ARCH}.tar.gz"
+          mkdir -p release
+          mkdir -p staging
+          if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          cargo build --release --locked -p cli --target "$TARGET"
+          install -m 755 "target/${TARGET}/release/pesaraja" staging/pesaraja
+          install -m 644 LICENSE staging/LICENSE
+          tar -C staging -czf "release/${archive}" pesaraja LICENSE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/*
+
+  release:
+    needs: cli-assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - run: rustup component add clippy rustfmt
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Verify tag matches every package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          rust_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "daraja-rs") | .version')"
+          cli_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "cli") | .version')"
+          npm_version="$(node -p "require('./daraja-ts/package.json').version")"
+          test "$TAG" = "v${rust_version}"
+          test "$TAG" = "v${cli_version}"
+          test "$TAG" = "v${npm_version}"
+
+      - name: Verify Rust workspace
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo check --workspace --locked
+          cargo test --workspace --locked
+
+      - name: Check Rust public API compatibility
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$previous_tag" ]; then
+            rustup update stable
+            cargo +stable install cargo-semver-checks --version 0.50.0 --locked
+            cargo +stable semver-checks --package daraja-rs --baseline-rev "$previous_tag"
+          else
+            echo "No previous release tag; skipping compatibility comparison."
+          fi
+
+      - name: Verify TypeScript workspace
+        run: |
+          npm ci
+          npm run build
+          npm test
+          npm run lint:package -w @pesaraja/sdk
+
+      - name: Build release assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          crate_archive="daraja-rs-${version}.crate"
+          mkdir -p release
+
+          cargo package -p daraja-rs --locked
+          cp "target/package/${crate_archive}" "release/${crate_archive}"
+          npm pack -w @pesaraja/sdk --pack-destination release
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cli-*
+          path: release
+          merge-multiple: true
+
+      - name: Create checksums
+        run: |
+          for asset in release/*.tar.gz; do
+            test "$(tar -tzf "$asset" | wc -l | tr -d ' ')" = "2"
+            tar -tzf "$asset" | grep -qx pesaraja
+            tar -tzf "$asset" | grep -qx LICENSE
+          done
+          test -n "$(tar -tzf release/daraja-rs-*.crate | grep 'Cargo.toml')"
+          test -n "$(tar -tzf release/*.tgz | grep 'package/dist/index.js')"
+          for asset in release/*; do
+            filename="$(basename "$asset")"
+            (cd release && sha256sum "$filename" > "${filename}.sha256")
+          done
+
+      - name: Attest release artifacts
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release/*
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi

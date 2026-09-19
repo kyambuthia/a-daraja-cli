@@ -2,6 +2,12 @@
 name = "cli"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Command-line client for Safaricom Daraja and M-Pesa"
+license = "MIT"
+repository = "https://github.com/kyambuthia/a-daraja-cli"
+homepage = "https://github.com/kyambuthia/a-daraja-cli"
+publish = false
 
 [[bin]]
 name = "pesaraja"
@@ -20,6 +26,7 @@ serde_json = "1"
 hyper = { version = "1", features = ["server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3"

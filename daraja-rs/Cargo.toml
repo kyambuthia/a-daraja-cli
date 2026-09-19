@@ -2,6 +2,14 @@
 name = "daraja-rs"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Safe Rust primitives for Safaricom Daraja and M-Pesa APIs"
+license = "MIT"
+repository = "https://github.com/kyambuthia/a-daraja-cli"
+homepage = "https://github.com/kyambuthia/a-daraja-cli"
+readme = "README.md"
+keywords = ["mpesa", "daraja", "payments", "kenya"]
+categories = ["api-bindings", "web-programming::http-client"]
 
 [dependencies]
 # HTTP client
@@ -16,6 +24,7 @@ aes-gcm = "0.10"
 base64 = "0.22"
 rsa = { version = "0.9", features = ["pem"] }
 # Security
+hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 # Idempotency
@@ -27,6 +36,7 @@ thiserror = "2"
 # Time
 chrono = "0.4"
 x509-cert = { version = "0.2.5", features = ["pem"] }
+url = "2"
 
 [dev-dependencies]
 rcgen = "0.14.8"

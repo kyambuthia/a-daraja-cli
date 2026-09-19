@@ -51,4 +51,32 @@ describe("config", () => {
     expect(creds.shortcode).toBe("174379");
     expect(creds.initiatorName).toBe("apitest");
   });
+
+  it("rejects malformed decrypted JSON with a bounded SDK error", () => {
+    const key = randomBytes(32);
+    const encrypted = encryptLikeRust({ consumer_key: "ck" }, key);
+    expect(() => decryptCredentials(encrypted, key)).toThrow(
+      "missing a valid consumer secret"
+    );
+  });
+
+  it("rejects invalid credential field types", () => {
+    const key = randomBytes(32);
+    const encrypted = encryptLikeRust(
+      {
+        consumer_key: "ck",
+        consumer_secret: "cs",
+        passkey: "pk",
+        shortcode: 174379,
+      },
+      key
+    );
+    expect(() => decryptCredentials(encrypted, key)).toThrow("valid shortcode");
+  });
+
+  it("rejects credential blobs without a complete nonce and tag", () => {
+    expect(() => decryptCredentials(Buffer.alloc(27), randomBytes(32))).toThrow(
+      "too short"
+    );
+  });
 });

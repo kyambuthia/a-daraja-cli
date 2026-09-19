@@ -1,0 +1,14 @@
+# cargo-audit configuration (also see deny.toml for cargo-deny).
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: "Marvin Attack" key-recovery timing sidechannel in `rsa`.
+    #
+    # Upstream has no fixed release. This workspace only performs PKCS#1 v1.5
+    # public-key *encryption* of the initiator password to Safaricom's published
+    # certificate (`Pkcs1v15Encrypt` in daraja-rs/src/security.rs). The advisory
+    # describes a private-key *decryption* sidechannel; no RSA private-key
+    # decryption of attacker-controlled ciphertext happens in production code.
+    # `RsaPrivateKey` appears only in tests that mint local fixtures.
+    "RUSTSEC-2023-0071",
+]

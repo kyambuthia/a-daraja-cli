@@ -4,16 +4,19 @@
 
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
-use crate::security::normalize_phone;
 use crate::types::C2bRegisterRequest;
+use crate::types::Environment;
+use crate::validation::{
+    validate_amount, validate_phone, validate_required_text, validate_shortcode, validate_url,
+};
 
 /// C2B Register URL response.
 #[derive(Debug, serde::Deserialize)]
 pub struct C2bRegisterResponse {
-    #[serde(rename = "OriginatorConversationID")]
-    pub originator_conversation_id: String,
-    #[serde(rename = "ConversationID")]
-    pub conversation_id: String,
+    #[serde(rename = "OriginatorConversationID", default)]
+    pub originator_conversation_id: Option<String>,
+    #[serde(rename = "ConversationID", default)]
+    pub conversation_id: Option<String>,
     #[serde(rename = "ResponseDescription")]
     pub response_description: String,
 }
@@ -25,7 +28,17 @@ pub async fn register_urls(
     response_type: &str,
     confirmation_url: &str,
     validation_url: &str,
+    idempotency_key: &str,
 ) -> Result<C2bRegisterResponse, DarajaError> {
+    validate_shortcode(shortcode)?;
+    if !matches!(response_type, "Completed" | "Cancelled") {
+        return Err(DarajaError::Config(
+            "response type must be Completed or Cancelled".into(),
+        ));
+    }
+    validate_url("confirmation URL", confirmation_url, client.environment())?;
+    validate_url("validation URL", validation_url, client.environment())?;
+
     let request = C2bRegisterRequest {
         short_code: shortcode.to_string(),
         response_type: response_type.to_string(),
@@ -33,7 +46,7 @@ pub async fn register_urls(
         validation_url: validation_url.to_string(),
     };
     client
-        .post("/mpesa/c2b/v1/registerurl", &request)
+        .post("/mpesa/c2b/v1/registerurl", &request, idempotency_key)
         .await
 }
 
@@ -44,20 +57,34 @@ pub async fn simulate_c2b(
     amount: u64,
     msisdn: &str,
     bill_ref_number: &str,
+    idempotency_key: &str,
 ) -> Result<C2bRegisterResponse, DarajaError> {
+    if !matches!(client.environment(), Environment::Sandbox) {
+        return Err(DarajaError::Config(
+            "C2B simulation is available only in the sandbox environment".into(),
+        ));
+    }
+    validate_shortcode(shortcode)?;
+    validate_amount(amount)?;
+    let msisdn = validate_phone(msisdn)?;
+    validate_required_text("bill reference", bill_ref_number, 100)?;
     let request = serde_json::json!({
         "ShortCode": shortcode,
         "CommandID": "CustomerPayBillOnline",
         "Amount": amount.to_string(),
-        "Msisdn": normalize_phone(msisdn),
+        "Msisdn": msisdn,
         "BillRefNumber": bill_ref_number,
     });
-    client.post("/mpesa/c2b/v1/simulate", &request).await
+    client
+        .post("/mpesa/c2b/v1/simulate", &request, idempotency_key)
+        .await
 }
 
 #[cfg(test)]
 mod tests {
-    
+    use super::*;
+    use crate::config::Credentials;
+    use zeroize::Zeroizing;
 
     #[test]
     fn register_url_endpoint_is_correct() {
@@ -74,5 +101,41 @@ mod tests {
         let valid = ["Completed", "Cancelled"];
         assert!(valid.contains(&"Completed"));
         assert!(valid.contains(&"Cancelled"));
+    }
+
+    #[test]
+    fn c2b_response_accepts_provider_omitting_originator_id() {
+        let response: C2bRegisterResponse = serde_json::from_value(serde_json::json!({
+            "ConversationID": "sim-c2b-1",
+            "ResponseDescription": "Success"
+        }))
+        .unwrap();
+        assert_eq!(response.originator_conversation_id, None);
+        assert_eq!(response.conversation_id.as_deref(), Some("sim-c2b-1"));
+    }
+
+    #[tokio::test]
+    async fn simulate_rejects_production_before_network_io() {
+        let credentials = Credentials {
+            consumer_key: Zeroizing::new("ck".into()),
+            consumer_secret: Zeroizing::new("cs".into()),
+            passkey: Zeroizing::new("pk".into()),
+            shortcode: "174379".into(),
+            initiator_name: None,
+            initiator_password: None,
+        };
+        let client = DarajaClient::new(credentials, Environment::Production)
+            .unwrap()
+            .dangerously_without_idempotency_for_testing();
+        let result = simulate_c2b(
+            &client,
+            "174379",
+            100,
+            "254712345678",
+            "ORDER-1",
+            "test:simulate:1",
+        )
+        .await;
+        assert!(matches!(result, Err(DarajaError::Config(message)) if message.contains("sandbox")));
     }
 }

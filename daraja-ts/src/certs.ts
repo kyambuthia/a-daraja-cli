@@ -1,15 +1,14 @@
+import { createHash, X509Certificate } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { darajaConfigDir } from "./config.js";
 import { DarajaError } from "./error.js";
 import type { Environment } from "./types.js";
 
 export const SANDBOX_CERT_URL =
-  "https://raw.githubusercontent.com/safaricom/mpesa-node-library/master/keys/sandbox-cert.cer";
-
-function darajaConfigDir(): string {
-  return join(homedir(), ".config", "daraja");
-}
+  "https://raw.githubusercontent.com/safaricom/mpesa-node-library/678e3c33b20c1447c209eb88eded89f1bb751e11/keys/sandbox-cert.cer";
+export const SANDBOX_CERT_SHA256 =
+  "bc97ac696be7c030d71631508b325fc03b335342d88d5ec466c7ffc368bc4550";
 
 export function certificatePath(environment: Environment): string {
   if (process.env.DARAJA_CERT_PATH) {
@@ -60,6 +59,11 @@ function validateCertificatePem(pem: string): void {
   ) {
     throw new DarajaError("Downloaded sandbox certificate is not valid PEM.");
   }
+  try {
+    new X509Certificate(pem);
+  } catch {
+    throw new DarajaError("Downloaded sandbox certificate is not valid X.509.");
+  }
 }
 
 /** Download the sandbox API certificate if it is not already on disk. */
@@ -83,6 +87,12 @@ export async function ensureSandboxCertificate(): Promise<string> {
 
   const pem = await response.text();
   validateCertificatePem(pem);
+  const digest = createHash("sha256").update(pem).digest("hex");
+  if (digest !== SANDBOX_CERT_SHA256) {
+    throw new DarajaError(
+      `Downloaded sandbox certificate checksum mismatch (got ${digest}).`
+    );
+  }
   await writeFile(path, pem, "utf8");
   return path;
 }

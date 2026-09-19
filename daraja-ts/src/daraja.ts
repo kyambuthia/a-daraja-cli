@@ -6,6 +6,7 @@ import { stkPush, stkPushQuery } from "./api/stk-push.js";
 import type { PromptOptions } from "./api/stk-push.js";
 import { queryStatus } from "./api/status.js";
 import { DarajaClient } from "./client.js";
+import type { DarajaClientOptions } from "./client.js";
 import {
   environmentFromSdkKey,
   loadCredentials,
@@ -16,6 +17,8 @@ import type {
   BalanceOptions,
   C2bRegisterResponse,
   ConversationResponse,
+  Credentials,
+  Environment,
   QueryOptions,
   RefundOptions,
   RegisterOptions,
@@ -38,6 +41,15 @@ export class Daraja {
     const environment = environmentFromSdkKey(sdkKey);
     const client = new DarajaClient(credentials, environment);
     return new Daraja(client);
+  }
+
+  /** Create directly from credentials, suitable for containers and secret managers. */
+  static fromCredentials(
+    credentials: Credentials,
+    environment: Environment,
+    options: DarajaClientOptions = {}
+  ): Daraja {
+    return new Daraja(new DarajaClient(credentials, environment, options));
   }
 
   /** Send M-Pesa PIN prompt to customer's phone (STK Push). */

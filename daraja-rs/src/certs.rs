@@ -3,13 +3,17 @@
 // Certificates are never bundled in the repo. Sandbox cert is downloaded during
 // `pesaraja init`; production cert comes from the Daraja portal.
 
+use crate::config::daraja_config_dir;
 use crate::error::DarajaError;
 use crate::types::Environment;
+use sha2::Digest;
 use std::path::{Path, PathBuf};
+use x509_cert::der::DecodePem;
 
 /// Official Safaricom sandbox API certificate (public key, not a secret).
-pub const SANDBOX_CERT_URL: &str =
-    "https://raw.githubusercontent.com/safaricom/mpesa-node-library/master/keys/sandbox-cert.cer";
+pub const SANDBOX_CERT_URL: &str = "https://raw.githubusercontent.com/safaricom/mpesa-node-library/678e3c33b20c1447c209eb88eded89f1bb751e11/keys/sandbox-cert.cer";
+pub const SANDBOX_CERT_SHA256: &str =
+    "bc97ac696be7c030d71631508b325fc03b335342d88d5ec466c7ffc368bc4550";
 
 /// Return the PEM certificate for the given Daraja environment.
 pub fn certificate_pem(environment: Environment) -> Result<String, DarajaError> {
@@ -64,6 +68,12 @@ pub async fn ensure_sandbox_certificate() -> Result<PathBuf, DarajaError> {
         .map_err(|e| DarajaError::Network(format!("failed to read sandbox certificate: {e}")))?;
 
     validate_certificate_pem(&pem)?;
+    let digest = format!("{:x}", sha2::Sha256::digest(pem.as_bytes()));
+    if digest != SANDBOX_CERT_SHA256 {
+        return Err(DarajaError::Config(format!(
+            "downloaded sandbox certificate checksum mismatch (got {digest})"
+        )));
+    }
 
     std::fs::write(&path, &pem).map_err(|e| {
         DarajaError::Config(format!(
@@ -75,21 +85,18 @@ pub async fn ensure_sandbox_certificate() -> Result<PathBuf, DarajaError> {
     Ok(path)
 }
 
-fn daraja_config_dir() -> Result<PathBuf, DarajaError> {
-    let home = std::env::var("HOME")
-        .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
-    Ok(PathBuf::from(format!("{home}/.config/daraja")))
-}
-
 fn validate_certificate_pem(pem: &str) -> Result<(), DarajaError> {
     let pem = pem.trim();
-    if pem.contains("BEGIN CERTIFICATE") && pem.contains("END CERTIFICATE") {
-        Ok(())
-    } else {
-        Err(DarajaError::Config(
+    if !pem.contains("BEGIN CERTIFICATE") || !pem.contains("END CERTIFICATE") {
+        return Err(DarajaError::Config(
             "downloaded sandbox certificate is not valid PEM".into(),
-        ))
+        ));
     }
+    x509_cert::Certificate::from_pem(pem)
+        .map(|_| ())
+        .map_err(|_| {
+            DarajaError::Config("downloaded sandbox certificate is not valid X.509".into())
+        })
 }
 
 fn missing_certificate_error(
@@ -123,7 +130,7 @@ mod tests {
 
     fn write_temp_cert(dir: &tempfile::TempDir) -> PathBuf {
         use rand::rngs::OsRng;
-        use rsa::{pkcs8::EncodePublicKey, RsaPrivateKey};
+        use rsa::{RsaPrivateKey, pkcs8::EncodePublicKey};
 
         let mut rng = OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation");

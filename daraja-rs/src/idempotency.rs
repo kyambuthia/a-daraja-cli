@@ -1,15 +1,39 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, OptionalExtension, params};
 
-const TTL_SECS: i64 = 86400;
+const TTL_SECS: i64 = 86_400;
 
-/// Outcome of a prior request for a given idempotency key.
+/// Outcome of a prior request for a scoped idempotency key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Pending,
     Success(Vec<u8>),
     Failed,
+    Unknown,
+}
+
+/// Result of atomically reserving an idempotency key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AcquireResult {
+    Acquired,
+    Pending,
+    Success(Vec<u8>),
+    Failed,
+    Unknown,
+    FingerprintMismatch,
+}
+
+/// Storage backend used by the client to reserve and record request outcomes.
+///
+/// Implement this trait to connect a client to shared storage such as Redis or
+/// Postgres. The default SQLite implementation remains available through
+/// `DarajaClient::new` and `with_idempotency_db`.
+pub trait IdempotencyBackend: Send {
+    fn acquire(&mut self, key: &str, fingerprint: &str) -> Result<AcquireResult, String>;
+    fn save_success(&mut self, key: &str, response: &[u8]) -> Result<(), String>;
+    fn save_failed(&mut self, key: &str) -> Result<(), String>;
+    fn save_unknown(&mut self, key: &str) -> Result<(), String>;
 }
 
 /// Local SQLite cache for idempotency keys.
@@ -21,87 +45,171 @@ impl IdempotencyStore {
     /// Open (or create) the idempotency database at `db_path`.
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(db_path)?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS idempotency (
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000;
+             CREATE TABLE IF NOT EXISTS idempotency (
                 key TEXT PRIMARY KEY,
+                fingerprint TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 response BLOB,
                 created_at INTEGER NOT NULL
-            )",
-            [],
+             );",
         )?;
+
+        // Migrate databases created before request fingerprints were stored.
+        let has_fingerprint = {
+            let mut stmt = conn.prepare("PRAGMA table_info(idempotency)")?;
+            let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for column in columns {
+                if column? == "fingerprint" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_fingerprint {
+            conn.execute(
+                "ALTER TABLE idempotency ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+
         Ok(Self { conn })
     }
 
-    /// Record that a request with this key is in flight.
-    pub fn save_pending(&self, key: &str) {
+    /// Atomically reserve a scoped key for a request fingerprint.
+    pub fn acquire(
+        &mut self,
+        key: &str,
+        fingerprint: &str,
+    ) -> Result<AcquireResult, rusqlite::Error> {
         let now = unix_now();
-        self.conn
-            .execute(
-                "INSERT OR REPLACE INTO idempotency (key, status, response, created_at)
-                 VALUES (?1, 'pending', NULL, ?2)",
-                params![key, now],
-            )
-            .expect("save_pending");
+        let cutoff = now - TTL_SECS;
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM idempotency
+             WHERE created_at < ?1 AND status IN ('success', 'failed')",
+            params![cutoff],
+        )?;
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO idempotency (key, fingerprint, status, response, created_at)
+             VALUES (?1, ?2, 'pending', NULL, ?3)",
+            params![key, fingerprint, now],
+        )?;
+
+        let result = if inserted == 1 {
+            AcquireResult::Acquired
+        } else {
+            let (stored_fingerprint, status, response): (String, String, Option<Vec<u8>>) = tx
+                .query_row(
+                    "SELECT fingerprint, status, response FROM idempotency WHERE key = ?1",
+                    params![key],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            if stored_fingerprint != fingerprint {
+                AcquireResult::FingerprintMismatch
+            } else {
+                match status.as_str() {
+                    "pending" => AcquireResult::Pending,
+                    "success" => AcquireResult::Success(response.unwrap_or_default()),
+                    "failed" => AcquireResult::Failed,
+                    "unknown" => AcquireResult::Unknown,
+                    _ => AcquireResult::Unknown,
+                }
+            }
+        };
+        tx.commit()?;
+        Ok(result)
     }
 
-    /// Record a successful response for this key.
-    pub fn save_success(&self, key: &str, response: &[u8]) {
-        let now = unix_now();
-        self.conn
-            .execute(
-                "INSERT OR REPLACE INTO idempotency (key, status, response, created_at)
-                 VALUES (?1, 'success', ?2, ?3)",
-                params![key, response, now],
-            )
-            .expect("save_success");
+    /// Record a successful, parsed response for this key.
+    pub fn save_success(&self, key: &str, response: &[u8]) -> Result<(), rusqlite::Error> {
+        self.update(key, "success", Some(response))
     }
 
-    /// Record that the request failed.
-    pub fn save_failed(&self, key: &str) {
-        let now = unix_now();
-        self.conn
-            .execute(
-                "INSERT OR REPLACE INTO idempotency (key, status, response, created_at)
-                 VALUES (?1, 'failed', NULL, ?2)",
-                params![key, now],
-            )
-            .expect("save_failed");
+    /// Record a definitive HTTP failure for this key.
+    pub fn save_failed(&self, key: &str) -> Result<(), rusqlite::Error> {
+        self.update(key, "failed", None)
+    }
+
+    /// Record that the request may have reached Daraja but no result was obtained.
+    pub fn save_unknown(&self, key: &str) -> Result<(), rusqlite::Error> {
+        self.update(key, "unknown", None)
+    }
+
+    fn update(
+        &self,
+        key: &str,
+        status: &str,
+        response: Option<&[u8]>,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE idempotency
+             SET status = ?2, response = ?3, created_at = ?4
+             WHERE key = ?1",
+            params![key, status, response, unix_now()],
+        )?;
+        Ok(())
     }
 
     /// Look up the cached status for a key.
-    pub fn get_status(&self, key: &str) -> Option<Status> {
-        let mut stmt = self
+    pub fn get_status(&self, key: &str) -> Result<Option<Status>, rusqlite::Error> {
+        let row: Option<(String, Option<Vec<u8>>)> = self
             .conn
-            .prepare("SELECT status, response FROM idempotency WHERE key = ?1")
-            .ok()?;
-        let (status, response): (String, Option<Vec<u8>>) = stmt
-            .query_row(params![key], |row| Ok((row.get(0)?, row.get(1)?)))
-            .ok()?;
-        match status.as_str() {
-            "pending" => Some(Status::Pending),
-            "success" => Some(Status::Success(response.unwrap_or_default())),
-            "failed" => Some(Status::Failed),
-            _ => None,
-        }
+            .query_row(
+                "SELECT status, response FROM idempotency WHERE key = ?1",
+                params![key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.map(|(status, response)| match status.as_str() {
+            "pending" => Status::Pending,
+            "success" => Status::Success(response.unwrap_or_default()),
+            "failed" => Status::Failed,
+            "unknown" => Status::Unknown,
+            _ => Status::Unknown,
+        }))
     }
 
-    /// Delete entries older than 24 hours.
-    pub fn cleanup_expired(&self) {
+    /// Delete terminal entries older than 24 hours.
+    ///
+    /// Pending and unknown outcomes are retained until an application resolves
+    /// them; expiring either state could permit an unsafe duplicate request.
+    pub fn cleanup_expired(&self) -> Result<(), rusqlite::Error> {
         let cutoff = unix_now() - TTL_SECS;
-        self.conn
-            .execute(
-                "DELETE FROM idempotency WHERE created_at < ?1",
-                params![cutoff],
-            )
-            .expect("cleanup_expired");
+        self.conn.execute(
+            "DELETE FROM idempotency
+             WHERE created_at < ?1 AND status IN ('success', 'failed')",
+            params![cutoff],
+        )?;
+        Ok(())
+    }
+}
+
+impl IdempotencyBackend for IdempotencyStore {
+    fn acquire(&mut self, key: &str, fingerprint: &str) -> Result<AcquireResult, String> {
+        IdempotencyStore::acquire(self, key, fingerprint).map_err(|error| error.to_string())
+    }
+
+    fn save_success(&mut self, key: &str, response: &[u8]) -> Result<(), String> {
+        IdempotencyStore::save_success(self, key, response).map_err(|error| error.to_string())
+    }
+
+    fn save_failed(&mut self, key: &str) -> Result<(), String> {
+        IdempotencyStore::save_failed(self, key).map_err(|error| error.to_string())
+    }
+
+    fn save_unknown(&mut self, key: &str) -> Result<(), String> {
+        IdempotencyStore::save_unknown(self, key).map_err(|error| error.to_string())
     }
 }
 
 fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("system time before UNIX epoch")
+        .unwrap_or_default()
         .as_secs() as i64
 }
 
@@ -116,66 +224,92 @@ mod tests {
         (dir, store)
     }
 
-    fn insert_with_timestamp(store: &IdempotencyStore, key: &str, created_at: i64) {
-        store
-            .conn
-            .execute(
-                "INSERT INTO idempotency (key, status, response, created_at)
-                 VALUES (?1, 'success', ?2, ?3)",
-                params![key, b"old".as_slice(), created_at],
-            )
-            .expect("insert row");
-    }
-
     #[test]
-    fn save_and_retrieve_pending() {
-        let (_dir, store) = temp_store();
-        let key = "pending-key";
-
-        store.save_pending(key);
-        assert_eq!(store.get_status(key), Some(Status::Pending));
-    }
-
-    #[test]
-    fn save_and_retrieve_success() {
-        let (_dir, store) = temp_store();
-        let key = "success-key";
-        let response = br#"{"ResponseCode":"0"}"#;
-
-        store.save_success(key, response);
+    fn acquire_is_atomic_and_detects_existing_pending_request() {
+        let (_dir, mut store) = temp_store();
         assert_eq!(
-            store.get_status(key),
-            Some(Status::Success(response.to_vec()))
+            store.acquire("scope:key", "fingerprint").unwrap(),
+            AcquireResult::Acquired
+        );
+        assert_eq!(
+            store.acquire("scope:key", "fingerprint").unwrap(),
+            AcquireResult::Pending
         );
     }
 
     #[test]
-    fn save_and_retrieve_failed() {
-        let (_dir, store) = temp_store();
-        let key = "failed-key";
-
-        store.save_failed(key);
-        assert_eq!(store.get_status(key), Some(Status::Failed));
+    fn acquire_rejects_same_key_for_different_payload() {
+        let (_dir, mut store) = temp_store();
+        store.acquire("scope:key", "first").unwrap();
+        assert_eq!(
+            store.acquire("scope:key", "second").unwrap(),
+            AcquireResult::FingerprintMismatch
+        );
     }
 
     #[test]
-    fn missing_key_returns_none() {
-        let (_dir, store) = temp_store();
-        assert_eq!(store.get_status("missing-key"), None);
+    fn success_response_is_reused() {
+        let (_dir, mut store) = temp_store();
+        let response = br#"{"ResponseCode":"0"}"#;
+        store.acquire("scope:key", "fingerprint").unwrap();
+        store.save_success("scope:key", response).unwrap();
+        assert_eq!(
+            store.acquire("scope:key", "fingerprint").unwrap(),
+            AcquireResult::Success(response.to_vec())
+        );
+    }
+
+    #[test]
+    fn unknown_outcome_is_not_retried() {
+        let (_dir, mut store) = temp_store();
+        store.acquire("scope:key", "fingerprint").unwrap();
+        store.save_unknown("scope:key").unwrap();
+        assert_eq!(
+            store.acquire("scope:key", "fingerprint").unwrap(),
+            AcquireResult::Unknown
+        );
+        assert_eq!(
+            store.get_status("scope:key").unwrap(),
+            Some(Status::Unknown)
+        );
     }
 
     #[test]
     fn cleanup_expired_removes_old_entries() {
         let (_dir, store) = temp_store();
-        let expired_key = "expired-key";
-        let fresh_key = "fresh-key";
-        let old_ts = unix_now() - TTL_SECS - 3600;
+        store
+            .conn
+            .execute(
+                "INSERT INTO idempotency (key, fingerprint, status, response, created_at)
+                 VALUES (?1, ?2, 'success', ?3, ?4)",
+                params![
+                    "expired",
+                    "fp",
+                    b"old".as_slice(),
+                    unix_now() - TTL_SECS - 1
+                ],
+            )
+            .unwrap();
+        store.cleanup_expired().unwrap();
+        assert_eq!(store.get_status("expired").unwrap(), None);
+    }
 
-        insert_with_timestamp(&store, expired_key, old_ts);
-        store.save_pending(fresh_key);
-
-        store.cleanup_expired();
-        assert_eq!(store.get_status(expired_key), None);
-        assert_eq!(store.get_status(fresh_key), Some(Status::Pending));
+    #[test]
+    fn cleanup_preserves_old_unknown_and_pending_entries() {
+        let (_dir, store) = temp_store();
+        for (key, status) in [("unknown", "unknown"), ("pending", "pending")] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO idempotency
+                        (key, fingerprint, status, response, created_at)
+                     VALUES (?1, 'fp', ?2, NULL, ?3)",
+                    params![key, status, unix_now() - TTL_SECS - 1],
+                )
+                .unwrap();
+        }
+        store.cleanup_expired().unwrap();
+        assert_eq!(store.get_status("unknown").unwrap(), Some(Status::Unknown));
+        assert_eq!(store.get_status("pending").unwrap(), Some(Status::Pending));
     }
 }

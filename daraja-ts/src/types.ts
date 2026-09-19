@@ -11,7 +11,12 @@ export interface Credentials {
 
 export type StkTransactionType = "paybill" | "till";
 
-export interface PromptOptions {
+export interface IdempotentOptions {
+  /** Stable business-operation key. Reuse only for the exact same request. */
+  idempotencyKey: string;
+}
+
+export interface PromptOptions extends IdempotentOptions {
   phone: string;
   amount: number;
   description?: string;
@@ -38,7 +43,7 @@ export interface ConversationResponse {
 
 export type B2cCommand = "business" | "salary" | "promotion";
 
-export interface SendOptions {
+export interface SendOptions extends IdempotentOptions {
   phone: string;
   amount: number;
   resultUrl: string;
@@ -61,7 +66,7 @@ export interface BalanceOptions {
   timeoutUrl: string;
 }
 
-export interface RefundOptions {
+export interface RefundOptions extends IdempotentOptions {
   transactionId: string;
   amount: number;
   receiverParty: string;
@@ -73,19 +78,19 @@ export interface RefundOptions {
 }
 
 export interface C2bRegisterResponse {
-  OriginatorConversationID: string;
-  ConversationID: string;
+  OriginatorConversationID?: string;
+  ConversationID?: string;
   ResponseDescription: string;
 }
 
-export interface RegisterOptions {
+export interface RegisterOptions extends IdempotentOptions {
   confirmationUrl: string;
   validationUrl: string;
   shortcode?: string;
   responseType?: "Completed" | "Cancelled";
 }
 
-export interface SimulateOptions {
+export interface SimulateOptions extends IdempotentOptions {
   phone: string;
   amount: number;
   reference?: string;

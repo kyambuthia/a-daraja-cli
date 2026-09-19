@@ -1,5 +1,5 @@
 {
-  "name": "pesaraja",
+  "name": "a-daraja-cli",
   "private": true,
   "workspaces": [
     "daraja-ts"

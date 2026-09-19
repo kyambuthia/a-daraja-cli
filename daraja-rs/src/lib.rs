@@ -4,11 +4,14 @@
 pub mod auth;
 pub mod certs;
 pub mod client;
+mod client_idempotency;
 pub mod config;
 pub mod error;
 pub mod idempotency;
+pub mod payments;
 pub mod security;
 pub mod types;
+pub mod validation;
 pub mod webhook;
 
 pub mod api;
@@ -34,8 +37,7 @@ impl Daraja {
 
     /// Create from `DARAJA_KEY` env var.
     pub fn from_env() -> Result<Self, DarajaError> {
-        let key = std::env::var("DARAJA_KEY")
-            .map_err(|_| DarajaError::MissingApiKey)?;
+        let key = std::env::var("DARAJA_KEY").map_err(|_| DarajaError::MissingApiKey)?;
         Self::from_key(&key)
     }
 
@@ -43,14 +45,13 @@ impl Daraja {
     pub fn from_key(key: &str) -> Result<Self, DarajaError> {
         let key_bytes = config::extract_key_from_sdk_key(key)?;
 
-        let home = std::env::var("HOME")
-            .map_err(|_| DarajaError::Config("HOME environment variable is not set".into()))?;
-        let config_path = format!("{}/.config/daraja/credentials.enc", home);
+        let config_path = config::daraja_config_dir()?.join("credentials.enc");
 
         let encrypted_bytes = std::fs::read(&config_path).map_err(|e| {
             DarajaError::Config(format!(
                 "failed to read credentials file at {}: {}",
-                config_path, e
+                config_path.display(),
+                e
             ))
         })?;
 
@@ -70,6 +71,14 @@ impl Daraja {
     pub fn client(&self) -> &DarajaClient {
         &self.client
     }
+
+    /// Use an explicit endpoint, primarily for local simulator and test
+    /// environments. Callers are responsible for restricting this override
+    /// to trusted endpoints.
+    pub fn with_test_base_url(mut self, url: impl Into<String>) -> Result<Self, DarajaError> {
+        self.client = self.client.with_test_base_url(url.into())?;
+        Ok(self)
+    }
 }
 
 #[cfg(test)]
@@ -79,7 +88,9 @@ mod tests {
     #[test]
     fn from_env_missing_key_is_error() {
         // Ensure DARAJA_KEY is not set in test env
-        unsafe { std::env::remove_var("DARAJA_KEY"); }
+        unsafe {
+            std::env::remove_var("DARAJA_KEY");
+        }
         let result = Daraja::from_env();
         assert!(result.is_err());
     }
@@ -87,16 +98,19 @@ mod tests {
     #[test]
     fn from_env_reads_key() {
         let key = format!("dsk_test_{}", "a".repeat(44));
-        unsafe { std::env::set_var("DARAJA_KEY", key); }
+        unsafe {
+            std::env::set_var("DARAJA_KEY", key);
+        }
         let result = Daraja::from_env();
         // Should fail on key parsing (invalid base64), not on missing env var
         assert!(result.is_err());
         // The error should NOT be MissingApiKey
-        match result {
-            Err(DarajaError::MissingApiKey) => panic!("should not be missing key"),
-            _ => {} // expected — key parse failure or no creds file
+        if let Err(DarajaError::MissingApiKey) = result {
+            panic!("should not be missing key");
         }
-        unsafe { std::env::remove_var("DARAJA_KEY"); }
+        unsafe {
+            std::env::remove_var("DARAJA_KEY");
+        }
     }
 
     #[test]
@@ -111,9 +125,9 @@ mod tests {
         let result = Daraja::from_key(&key);
         // Will fail on missing credentials file, not on key format
         match result {
-            Err(DarajaError::Config(_)) => {} // expected: no creds file
+            Err(DarajaError::Config(_)) => {}     // expected: no creds file
             Err(DarajaError::Encryption(_)) => {} // also possible
-            Err(e) => panic!("unexpected error: {:?}", e),
+            Err(e) => panic!("unexpected error: {e:?}"),
             Ok(_) => panic!("should fail without credentials file"),
         }
     }

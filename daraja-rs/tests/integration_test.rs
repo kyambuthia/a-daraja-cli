@@ -3,7 +3,7 @@
 // Tests the complete flow from `Daraja::from_key()` → `stk_push()` → response.
 // This is what `mpesa init && mpesa stk` does in production.
 
-use daraja_rs::api::stk_push::stk_push;
+use daraja_rs::api::stk_push::stk_push_with_idempotency_key;
 use daraja_rs::client::DarajaClient;
 use daraja_rs::config::{self, Credentials};
 use daraja_rs::types::Environment;
@@ -44,24 +44,24 @@ async fn full_pipeline_init_to_stk_push() {
     // OAuth mock
     Mock::given(method("GET"))
         .and(path("/oauth/v1/generate"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            serde_json::json!({"access_token": "e2e-token", "expires_in": "3599"}),
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"access_token": "e2e-token", "expires_in": "3599"}),
+            ),
+        )
         .mount(&server)
         .await;
 
     // STK Push mock
     Mock::given(method("POST"))
         .and(path("/mpesa/stkpush/v1/processrequest"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            serde_json::json!({
-                "MerchantRequestID": "e2e-mr",
-                "CheckoutRequestID": "e2e-co",
-                "ResponseCode": "0",
-                "ResponseDescription": "Success",
-                "CustomerMessage": "Success"
-            }),
-        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "MerchantRequestID": "e2e-mr",
+            "CheckoutRequestID": "e2e-co",
+            "ResponseCode": "0",
+            "ResponseDescription": "Success",
+            "CustomerMessage": "Success"
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -70,17 +70,19 @@ async fn full_pipeline_init_to_stk_push() {
     // Build client manually pointing at mock server
     let client = DarajaClient::new(creds, Environment::Sandbox)
         .unwrap()
-        .with_base_url(server.uri())
-        .without_idempotency();
+        .with_test_base_url(server.uri())
+        .unwrap()
+        .dangerously_without_idempotency_for_testing();
 
     // Step 4: Call stk_push — this is what `pesaraja stk` does
-    let resp = stk_push(
+    let resp = stk_push_with_idempotency_key(
         &client,
         "254712345678",
         100,
         "Moringa seedlings",
         "Order #123",
         "https://example.com/callback",
+        "test:integration:success",
     )
     .await
     .unwrap();
@@ -104,16 +106,18 @@ async fn pipeline_auth_failure_propagates_error() {
     let creds = test_credentials();
     let client = DarajaClient::new(creds, Environment::Sandbox)
         .unwrap()
-        .with_base_url(server.uri())
-        .without_idempotency();
+        .with_test_base_url(server.uri())
+        .unwrap()
+        .dangerously_without_idempotency_for_testing();
 
-    let result = stk_push(
+    let result = stk_push_with_idempotency_key(
         &client,
         "254712345678",
         100,
         "test",
         "ref",
         "https://cb",
+        "test:integration:auth-failure",
     )
     .await;
 
@@ -127,9 +131,10 @@ async fn pipeline_stk_push_fails_with_error_response() {
     // OAuth succeeds
     Mock::given(method("GET"))
         .and(path("/oauth/v1/generate"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            serde_json::json!({"access_token": "tok", "expires_in": "3599"}),
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"access_token": "tok", "expires_in": "3599"})),
+        )
         .mount(&server)
         .await;
 
@@ -143,16 +148,18 @@ async fn pipeline_stk_push_fails_with_error_response() {
     let creds = test_credentials();
     let client = DarajaClient::new(creds, Environment::Sandbox)
         .unwrap()
-        .with_base_url(server.uri())
-        .without_idempotency();
+        .with_test_base_url(server.uri())
+        .unwrap()
+        .dangerously_without_idempotency_for_testing();
 
-    let result = stk_push(
+    let result = stk_push_with_idempotency_key(
         &client,
         "254712345678",
         100,
         "test",
         "ref",
         "https://cb",
+        "test:integration:api-failure",
     )
     .await;
 

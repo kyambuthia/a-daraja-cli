@@ -6,6 +6,7 @@ use crate::api::common::{initiator_name, initiator_security_credential};
 use crate::client::DarajaClient;
 use crate::error::DarajaError;
 use crate::types::TransactionStatusRequest;
+use crate::validation::{validate_optional_text, validate_required_text, validate_url};
 
 const TRANSACTION_STATUS_PATH: &str = "/mpesa/transactionstatus/v1/query";
 
@@ -31,6 +32,12 @@ pub async fn query_status(
     result_url: &str,
     timeout_url: &str,
 ) -> Result<TransactionStatusResponse, DarajaError> {
+    validate_required_text("transaction ID", transaction_id, 128)?;
+    validate_required_text("remarks", remarks, 100)?;
+    validate_optional_text("occasion", occasion, 100)?;
+    validate_url("result URL", result_url, client.environment())?;
+    validate_url("timeout URL", timeout_url, client.environment())?;
+
     let request = TransactionStatusRequest {
         initiator: initiator_name(client)?,
         security_credential: initiator_security_credential(client)?,
@@ -44,7 +51,9 @@ pub async fn query_status(
         occasion: occasion.into(),
     };
 
-    client.post(TRANSACTION_STATUS_PATH, &request).await
+    client
+        .post_without_idempotency(TRANSACTION_STATUS_PATH, &request)
+        .await
 }
 
 #[cfg(test)]
@@ -53,10 +62,7 @@ mod tests {
 
     #[test]
     fn endpoint_path_is_correct() {
-        assert_eq!(
-            TRANSACTION_STATUS_PATH,
-            "/mpesa/transactionstatus/v1/query"
-        );
+        assert_eq!(TRANSACTION_STATUS_PATH, "/mpesa/transactionstatus/v1/query");
     }
 
     #[test]
