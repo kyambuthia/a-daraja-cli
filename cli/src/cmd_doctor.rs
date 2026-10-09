@@ -327,11 +327,27 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         ),
     });
 
-    let critical_failed = checks.iter().any(|c| c.critical && !c.ok);
+    report(&checks, json)?;
 
+    if has_critical_failure(&checks) {
+        return Err(DarajaError::Config(
+            "critical checks failed — review the report above".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// True when any check marked critical did not pass.
+fn has_critical_failure(checks: &[CheckItem]) -> bool {
+    checks.iter().any(|c| c.critical && !c.ok)
+}
+
+/// Render the report, as JSON for scripts or as a list for a person.
+fn report(checks: &[CheckItem], json: bool) -> Result<(), DarajaError> {
     if json {
         let output = serde_json::json!({
-            "critical_failed": critical_failed,
+            "critical_failed": has_critical_failure(checks),
             "checks": checks.iter().map(|check| serde_json::json!({
                 "ok": check.ok,
                 "message": check.message,
@@ -341,17 +357,10 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         output::print_json(&output)?;
     } else {
         println!();
-        for check in &checks {
+        for check in checks {
             print_check(check);
         }
         println!();
     }
-
-    if critical_failed {
-        return Err(DarajaError::Config(
-            "critical checks failed — review the report above".into(),
-        ));
-    }
-
     Ok(())
 }
