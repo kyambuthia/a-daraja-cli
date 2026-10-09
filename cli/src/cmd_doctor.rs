@@ -273,132 +273,129 @@ async fn credential_checks(
             message: "SDK key has an invalid prefix (expected dsk_test_ or dsk_live_)".into(),
             hint: Some("Re-run `pesaraja init` to generate a valid key.".into()),
         });
-    } else if creds_exist {
-        match config::extract_key_from_sdk_key(key) {
-            Ok(key_bytes) => {
-                let encrypted = std::fs::read(creds_path)
-                    .map_err(|e| DarajaError::Config(format!("failed to read credentials: {e}")))?;
-                match config::decrypt_credentials(&encrypted, &key_bytes) {
-                    Ok(creds) => {
-                        let env = if is_sandbox {
-                            Environment::Sandbox
-                        } else {
-                            Environment::Production
-                        };
-                        let env_name = if is_sandbox { "Sandbox" } else { "Production" };
+        return Ok(checks);
+    }
 
-                        let mut token_manager = TokenManager::new(
-                            creds.consumer_key.to_string(),
-                            creds.consumer_secret.to_string(),
-                            env,
-                        );
-                        match token_manager.get_token().await {
-                            Ok(token) => {
-                                let expires_in =
-                                    (token.expires_at - chrono::Utc::now()).num_seconds();
-                                let expires_in = expires_in.max(0);
-                                checks.push(CheckItem {
-                                    ok: true,
-                                    critical: false,
-                                    message: format!(
-                                        "{env_name} OAuth token: valid (expires in {expires_in}s)"
-                                    ),
-                                    hint: None,
-                                });
-                            }
-                            Err(err) => {
-                                checks.push(CheckItem {
-                                    ok: false,
-                                    critical: true,
-                                    message: format!("{env_name} OAuth failed: {err}"),
-                                    hint: Some(
-                                        "Check your consumer key and secret in `pesaraja init`."
-                                            .into(),
-                                    ),
-                                });
-                            }
-                        }
+    // Nothing below can run without the credentials file to decrypt.
+    if !creds_exist {
+        return Ok(checks);
+    }
 
-                        let has_initiator =
-                            creds.initiator_name.is_some() && creds.initiator_password.is_some();
-                        if has_initiator {
-                            checks.push(CheckItem {
-                                ok: true,
-                                critical: false,
-                                message: "Initiator credentials configured".into(),
-                                hint: None,
-                            });
-                        } else {
-                            checks.push(CheckItem {
-                                ok: false,
-                                critical: false,
-                                message: "Initiator credentials not configured".into(),
-                                hint: Some(
-                                    "Required for send, query, balance, and refund. \
-                                     Re-run `pesaraja init` and add initiator details."
-                                        .into(),
-                                ),
-                            });
-                        }
-
-                        if is_sandbox {
-                            if let Err(err) =
-                                validate_credentials_for_environment(Environment::Sandbox, &creds)
-                            {
-                                checks.push(CheckItem {
-                                    ok: false,
-                                    critical: true,
-                                    message: format!("Sandbox passkey mismatch: {err}"),
-                                    hint: Some(
-                                        "Re-run `pesaraja init` and use the public sandbox passkey."
-                                            .into(),
-                                    ),
-                                });
-                            } else {
-                                checks.push(CheckItem {
-                                    ok: true,
-                                    critical: false,
-                                    message: "Sandbox passkey matches the documented value".into(),
-                                    hint: None,
-                                });
-                            }
-                        }
-
-                        if is_sandbox {
-                            checks.push(CheckItem {
-                                ok: false,
-                                critical: false,
-                                message: "send: not available in sandbox (needs Go Live)".into(),
-                                hint: None,
-                            });
-                        } else if has_initiator {
-                            checks.push(CheckItem {
-                                ok: true,
-                                critical: false,
-                                message: "send: credentials ready".into(),
-                                hint: None,
-                            });
-                        }
-                    }
-                    Err(err) => {
-                        checks.push(CheckItem {
-                            ok: false,
-                            critical: true,
-                            message: format!("Failed to decrypt credentials: {err}"),
-                            hint: Some("Your DARAJA_KEY may not match the encrypted file.".into()),
-                        });
-                    }
-                }
-            }
-            Err(err) => {
-                checks.push(CheckItem {
-                    ok: false,
-                    critical: true,
-                    message: format!("Invalid SDK key format: {err}"),
-                    hint: None,
-                });
-            }
+    let key_bytes = match config::extract_key_from_sdk_key(key) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            checks.push(CheckItem {
+                ok: false,
+                critical: true,
+                message: format!("Invalid SDK key format: {err}"),
+                hint: None,
+            });
+            return Ok(checks);
         }
+    };
+
+    let encrypted = std::fs::read(creds_path)
+        .map_err(|e| DarajaError::Config(format!("failed to read credentials: {e}")))?;
+
+    let creds = match config::decrypt_credentials(&encrypted, &key_bytes) {
+        Ok(creds) => creds,
+        Err(err) => {
+            checks.push(CheckItem {
+                ok: false,
+                critical: true,
+                message: format!("Failed to decrypt credentials: {err}"),
+                hint: Some("Your DARAJA_KEY may not match the encrypted file.".into()),
+            });
+            return Ok(checks);
+        }
+    };
+
+    let env = if is_sandbox {
+        Environment::Sandbox
+    } else {
+        Environment::Production
+    };
+    let env_name = if is_sandbox { "Sandbox" } else { "Production" };
+
+    let mut token_manager = TokenManager::new(
+        creds.consumer_key.to_string(),
+        creds.consumer_secret.to_string(),
+        env,
+    );
+    match token_manager.get_token().await {
+        Ok(token) => {
+            let expires_in = (token.expires_at - chrono::Utc::now()).num_seconds();
+            let expires_in = expires_in.max(0);
+            checks.push(CheckItem {
+                ok: true,
+                critical: false,
+                message: format!("{env_name} OAuth token: valid (expires in {expires_in}s)"),
+                hint: None,
+            });
+        }
+        Err(err) => {
+            checks.push(CheckItem {
+                ok: false,
+                critical: true,
+                message: format!("{env_name} OAuth failed: {err}"),
+                hint: Some("Check your consumer key and secret in `pesaraja init`.".into()),
+            });
+        }
+    }
+
+    let has_initiator = creds.initiator_name.is_some() && creds.initiator_password.is_some();
+    if has_initiator {
+        checks.push(CheckItem {
+            ok: true,
+            critical: false,
+            message: "Initiator credentials configured".into(),
+            hint: None,
+        });
+    } else {
+        checks.push(CheckItem {
+            ok: false,
+            critical: false,
+            message: "Initiator credentials not configured".into(),
+            hint: Some(
+                "Required for send, query, balance, and refund. \
+                 Re-run `pesaraja init` and add initiator details."
+                    .into(),
+            ),
+        });
+    }
+
+    if is_sandbox {
+        if let Err(err) = validate_credentials_for_environment(Environment::Sandbox, &creds) {
+            checks.push(CheckItem {
+                ok: false,
+                critical: true,
+                message: format!("Sandbox passkey mismatch: {err}"),
+                hint: Some("Re-run `pesaraja init` and use the public sandbox passkey.".into()),
+            });
+        } else {
+            checks.push(CheckItem {
+                ok: true,
+                critical: false,
+                message: "Sandbox passkey matches the documented value".into(),
+                hint: None,
+            });
+        }
+    }
+
+    if is_sandbox {
+        checks.push(CheckItem {
+            ok: false,
+            critical: false,
+            message: "send: not available in sandbox (needs Go Live)".into(),
+            hint: None,
+        });
+    } else if has_initiator {
+        checks.push(CheckItem {
+            ok: true,
+            critical: false,
+            message: "send: credentials ready".into(),
+            hint: None,
+        });
     }
 
     Ok(checks)
