@@ -181,68 +181,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         }
     }
 
-    if is_sandbox {
-        checks.push(CheckItem {
-            ok: true,
-            critical: false,
-            message: "Using sandbox environment (dsk_test_)".into(),
-            hint: None,
-        });
-
-        let sandbox_cert_path = certificate_path(Environment::Sandbox)?;
-        let sandbox_cert_ok = sandbox_cert_path.exists();
-        checks.push(CheckItem {
-            ok: sandbox_cert_ok,
-            critical: false,
-            message: if sandbox_cert_ok {
-                "Sandbox API certificate found".into()
-            } else {
-                "Sandbox API certificate not found".into()
-            },
-            hint: if sandbox_cert_ok {
-                None
-            } else {
-                Some(format!(
-                    "Run `pesaraja init` to download {}.",
-                    sandbox_cert_path.display()
-                ))
-            },
-        });
-
-        checks.push(CheckItem {
-            ok: false,
-            critical: false,
-            message: "Production credentials not configured".into(),
-            hint: Some("Run `pesaraja init --env production` to set up.".into()),
-        });
-    } else if is_production {
-        checks.push(CheckItem {
-            ok: true,
-            critical: false,
-            message: "Production environment configured (dsk_live_)".into(),
-            hint: None,
-        });
-
-        let production_cert_path = certificate_path(Environment::Production)?;
-        let cert_ok = production_cert_path.exists();
-        checks.push(CheckItem {
-            ok: cert_ok,
-            critical: false,
-            message: if cert_ok {
-                "Production API certificate found".into()
-            } else {
-                "Production API certificate not found".into()
-            },
-            hint: if cert_ok {
-                None
-            } else {
-                Some(format!(
-                    "Download from the Daraja portal and save to {} (or set DARAJA_CERT_PATH).",
-                    production_cert_path.display()
-                ))
-            },
-        });
-    }
+    checks.extend(environment_checks(is_sandbox, is_production)?);
 
     checks.push(CheckItem {
         ok: true,
@@ -375,5 +314,79 @@ fn stored_secret_checks(
             });
         }
     }
+    Ok(checks)
+}
+
+/// Checks tied to the environment the SDK key selects: whether the right
+/// API certificate is on disk, and what is not configured yet.
+fn environment_checks(
+    is_sandbox: bool,
+    is_production: bool,
+) -> Result<Vec<CheckItem>, DarajaError> {
+    let mut checks: Vec<CheckItem> = Vec::new();
+
+    if is_sandbox {
+        checks.push(CheckItem {
+            ok: true,
+            critical: false,
+            message: "Using sandbox environment (dsk_test_)".into(),
+            hint: None,
+        });
+
+        let sandbox_cert_path = certificate_path(Environment::Sandbox)?;
+        let sandbox_cert_ok = sandbox_cert_path.exists();
+        checks.push(CheckItem {
+            ok: sandbox_cert_ok,
+            critical: false,
+            message: if sandbox_cert_ok {
+                "Sandbox API certificate found".into()
+            } else {
+                "Sandbox API certificate not found".into()
+            },
+            hint: if sandbox_cert_ok {
+                None
+            } else {
+                Some(format!(
+                    "Run `pesaraja init` to download {}.",
+                    sandbox_cert_path.display()
+                ))
+            },
+        });
+
+        checks.push(CheckItem {
+            ok: false,
+            critical: false,
+            message: "Production credentials not configured".into(),
+            hint: Some("Run `pesaraja init --env production` to set up.".into()),
+        });
+    } else if is_production {
+        checks.push(CheckItem {
+            ok: true,
+            critical: false,
+            message: "Production environment configured (dsk_live_)".into(),
+            hint: None,
+        });
+
+        let production_cert_path = certificate_path(Environment::Production)?;
+        let cert_ok = production_cert_path.exists();
+        checks.push(CheckItem {
+            ok: cert_ok,
+            critical: false,
+            message: if cert_ok {
+                "Production API certificate found".into()
+            } else {
+                "Production API certificate not found".into()
+            },
+            hint: if cert_ok {
+                None
+            } else {
+                Some(format!(
+                    "Download from the Daraja portal and save to {} (or set DARAJA_CERT_PATH).",
+                    production_cert_path.display()
+                ))
+            },
+        });
+    }
+
     Ok(checks)
 }
