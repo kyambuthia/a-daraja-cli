@@ -2,11 +2,10 @@
 
 ## Project shape
 
-A Daraja CLI is a Rust + TypeScript monorepo for Safaricom Daraja/M-Pesa:
+A Daraja CLI is a Rust workspace for Safaricom Daraja/M-Pesa:
 
 - `daraja-rs/` — Rust SDK and Daraja API primitives.
 - `cli/` — the `pesaraja` Rust CLI.
-- `daraja-ts/` — the `@pesaraja/sdk` TypeScript SDK.
 - `docs/` and `API.md` — user, architecture, and protocol documentation.
 
 Read the relevant package code and tests before changing behavior. Design documents describe intent and may be ahead of implementation; code, tests, and current user-facing documentation are the contract.
@@ -36,7 +35,6 @@ without an explicit implementation, test, and documentation change.
 
 ## Repository conventions
 
-- Keep Rust and TypeScript SDK behavior aligned where the APIs overlap.
 - Preserve the existing public names and command behavior unless the task explicitly requests a breaking change.
 - Update relevant docs and examples when CLI flags, SDK methods, environment variables, paths, or security guarantees change.
 - Resolve naming inconsistencies deliberately: the shipped binary is `pesaraja`; do not introduce `mpesa` aliases or rename commands without checking current code, tests, and docs.
@@ -46,18 +44,9 @@ without an explicit implementation, test, and documentation change.
 
 Run only checks relevant to the changed area; use the repository's configured toolchain.
 
-Rust:
-
 ```bash
 cargo test --workspace
 cargo check --workspace
-```
-
-TypeScript:
-
-```bash
-npm test
-npm run build
 ```
 
 For a focused change, prefer package- or test-level commands over the full workspace. Add or update tests for request serialization, error handling, credential boundaries, callback parsing/verification, idempotency, and CLI validation as applicable.

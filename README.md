@@ -3,12 +3,11 @@
 > **Alpha software:** do not use for production money movement yet. Callback
 > signature verification is not currently implemented.
 
-> A safer command-line interface and SDK toolkit for Safaricom Daraja and M-Pesa.
+> A safer command-line interface and Rust SDK for Safaricom Daraja and M-Pesa.
 
 **Naming:** A Daraja CLI is the project and repository. `pesaraja` is the
-installed command, `daraja-rs` is the Rust crate, and `@pesaraja/sdk` is the
-TypeScript package. The command and package names remain stable for existing
-scripts and imports.
+installed command and `daraja-rs` is the Rust crate. Both names remain stable
+for existing scripts.
 
 Current code-backed docs:
 
@@ -68,15 +67,14 @@ explicit directory (useful for containers and tests).
 DARAJA_KEY=dsk_test_...
 ```
 
-## Monorepo
+## Workspace
 
 | Package | What |
 |---------|------|
 | `cli/` | `pesaraja` binary — init, prompt, receive, send, doctor |
 | `daraja-rs/` | Rust library |
-| `daraja-ts/` | `@pesaraja/sdk` — TypeScript / Node / Next.js |
 
-Same `DARAJA_KEY` works in every language.
+The same `DARAJA_KEY` works for both.
 
 ## Safe simulator quick start
 
@@ -96,33 +94,13 @@ pesaraja payments list
 Production money-moving commands require a stable caller-provided idempotency
 key. Sandbox CLI commands generate and persist one when omitted.
 
-## TypeScript / website
-
-```typescript
-import { Daraja, parseStkCallback, stkCallbackPaid } from "@pesaraja/sdk";
-
-const d = await Daraja.fromEnv();
-await d.prompt({
-  phone: "254712345678",
-  amount: 500,
-  callbackUrl: "https://your-server.com/api/mpesa/callback",
-  idempotencyKey: "order:ORDER-123:stk",
-});
-```
+## Using the same idempotency key
 
 Use the same idempotency key only for the exact same business operation. An
 unknown network outcome must be reconciled before retrying with a new key.
 
 Callbacks are untrusted input. Parsing or matching a callback does not
 authenticate its sender; reconcile payment state before fulfilling an order.
-
-Callback route examples: `daraja-ts/examples/nextjs-app-router/` and `daraja-ts/examples/express/`.
-
-Install from the monorepo (npm publish not yet):
-
-```bash
-npm install file:./daraja-ts
-```
 
 ## Commands
 

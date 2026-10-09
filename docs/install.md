@@ -3,7 +3,6 @@
 ## Requirements
 
 - Rust and Cargo for the CLI build path.
-- Node.js 22 or 24 for the TypeScript SDK.
 - A Safaricom Daraja app with consumer key and consumer secret.
 - A PayBill or Till shortcode. Phone numbers are rejected where a BusinessShortCode is required.
 
@@ -40,23 +39,6 @@ curl -fsSL https://raw.githubusercontent.com/kyambuthia/a-daraja-cli/trunk/insta
 ```
 
 If the fallback path runs, Cargo must be installed.
-
-## Install The TypeScript SDK
-
-From this monorepo:
-
-```bash
-npm install
-npm run build -w @pesaraja/sdk
-```
-
-From another local project, install the package by path until the package is published:
-
-```bash
-npm install /path/to/a-daraja-cli/daraja-ts
-```
-
-The package exports ESM from `@pesaraja/sdk`.
 
 ## Configuration directory
 

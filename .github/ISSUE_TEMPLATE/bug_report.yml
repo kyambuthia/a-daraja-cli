@@ -16,7 +16,7 @@ body:
     id: component
     attributes:
       label: Component
-      options: [pesaraja CLI, daraja-rs, "@pesaraja/sdk", Documentation]
+      options: [pesaraja CLI, daraja-rs, Documentation]
     validations:
       required: true
   - type: textarea

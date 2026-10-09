@@ -1,15 +1,13 @@
 # Roadmap
 
 A Daraja CLI is an alpha toolkit for integrating Safaricom Daraja safely. The
-repository ships the `pesaraja` command, the `daraja-rs` crate, and the
-`@pesaraja/sdk` TypeScript package. This roadmap describes remaining work; it
-does not describe shipped behavior.
+repository ships the `pesaraja` command and the `daraja-rs` crate. This
+roadmap describes remaining work; it does not describe shipped behavior.
 
 ## Public preview — 0.1
 
 - Keep CI, package linting, dependency policy, and simulator integration green.
 - Enable GitHub private vulnerability reporting and Discussions.
-- Validate npm trusted publishing in the protected `npm-publish` environment.
 - Publish signed/checksummed release artifacts and verify install instructions.
 - Document the known callback-authentication limitation prominently.
 
@@ -38,7 +36,7 @@ provider events without relying on source IP alone.
 
 ## Stable release — 1.0
 
-- Stabilize Rust and TypeScript public APIs with semver compatibility checks.
+- Stabilize the public Rust API with semver compatibility checks.
 - Publish an upgrade and deprecation policy.
 - Complete accessibility and terminal UX review for interactive commands.
 - Establish supported Rust and Node release lines and maintenance windows.

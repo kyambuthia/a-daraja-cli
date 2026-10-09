@@ -10,6 +10,5 @@
 
 <!-- List exact commands and outcomes. Do not include credentials or real payment data. -->
 
-- [ ] Rust and TypeScript behavior remain aligned where applicable.
 - [ ] Tests use mocks or the local simulator only.
 - [ ] Public docs are updated for contract changes.
