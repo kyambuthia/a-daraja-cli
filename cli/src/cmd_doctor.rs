@@ -2,6 +2,12 @@ use crate::prelude::*;
 
 pub(crate) struct CheckItem {
     ok: bool,
+    /// Whether failing this check means the CLI cannot work at all.
+    ///
+    /// Carried on the check rather than inferred from its wording: the exit
+    /// status used to be decided by substring-matching the messages, so
+    /// rewording one silently changed whether `doctor` failed.
+    critical: bool,
     message: String,
     hint: Option<String>,
 }
@@ -21,6 +27,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
     let creds_exist = creds_path.exists();
     checks.push(CheckItem {
         ok: creds_exist,
+        critical: true,
         message: if creds_exist {
             format!("Credentials encrypted at rest ({})", creds_path.display())
         } else {
@@ -37,6 +44,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         let permissions_ok = profiles::ensure_private_permissions(&creds_path).is_ok();
         checks.push(CheckItem {
             ok: permissions_ok,
+            critical: false,
             message: if permissions_ok {
                 "Credentials file permissions are private".into()
             } else {
@@ -56,6 +64,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
 
     checks.push(CheckItem {
         ok: key_set,
+        critical: true,
         message: if key_set {
             if key_from_env {
                 "DARAJA_KEY is set (env var)".to_string()
@@ -78,6 +87,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
             let permissions_ok = profiles::ensure_private_permissions(&path).is_ok();
             checks.push(CheckItem {
                 ok: permissions_ok,
+                critical: false,
                 message: if permissions_ok {
                     "SDK key file permissions are private".into()
                 } else {
@@ -105,6 +115,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         if !is_sandbox && !is_production {
             checks.push(CheckItem {
                 ok: false,
+                critical: true,
                 message: "SDK key has an invalid prefix (expected dsk_test_ or dsk_live_)".into(),
                 hint: Some("Re-run `pesaraja init` to generate a valid key.".into()),
             });
@@ -135,6 +146,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                                     let expires_in = expires_in.max(0);
                                     checks.push(CheckItem {
                                         ok: true,
+                                        critical: false,
                                         message: format!(
                                             "{env_name} OAuth token: valid (expires in {expires_in}s)"
                                         ),
@@ -144,6 +156,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                                 Err(err) => {
                                     checks.push(CheckItem {
                                         ok: false,
+                                        critical: true,
                                         message: format!("{env_name} OAuth failed: {err}"),
                                         hint: Some(
                                             "Check your consumer key and secret in `pesaraja init`."
@@ -158,12 +171,14 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                             if has_initiator {
                                 checks.push(CheckItem {
                                     ok: true,
+                                    critical: false,
                                     message: "Initiator credentials configured".into(),
                                     hint: None,
                                 });
                             } else {
                                 checks.push(CheckItem {
                                     ok: false,
+                                    critical: false,
                                     message: "Initiator credentials not configured".into(),
                                     hint: Some(
                                         "Required for send, query, balance, and refund. \
@@ -180,6 +195,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                                 ) {
                                     checks.push(CheckItem {
                                         ok: false,
+                                        critical: true,
                                         message: format!("Sandbox passkey mismatch: {err}"),
                                         hint: Some(
                                             "Re-run `pesaraja init` and use the public sandbox passkey."
@@ -189,6 +205,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                                 } else {
                                     checks.push(CheckItem {
                                         ok: true,
+                                        critical: false,
                                         message: "Sandbox passkey matches the documented value"
                                             .into(),
                                         hint: None,
@@ -199,6 +216,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                             if is_sandbox {
                                 checks.push(CheckItem {
                                     ok: false,
+                                    critical: false,
                                     message: "send: not available in sandbox (needs Go Live)"
                                         .into(),
                                     hint: None,
@@ -206,6 +224,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                             } else if has_initiator {
                                 checks.push(CheckItem {
                                     ok: true,
+                                    critical: false,
                                     message: "send: credentials ready".into(),
                                     hint: None,
                                 });
@@ -214,6 +233,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                         Err(err) => {
                             checks.push(CheckItem {
                                 ok: false,
+                                critical: true,
                                 message: format!("Failed to decrypt credentials: {err}"),
                                 hint: Some(
                                     "Your DARAJA_KEY may not match the encrypted file.".into(),
@@ -225,6 +245,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
                 Err(err) => {
                     checks.push(CheckItem {
                         ok: false,
+                        critical: true,
                         message: format!("Invalid SDK key format: {err}"),
                         hint: None,
                     });
@@ -236,6 +257,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
     if is_sandbox {
         checks.push(CheckItem {
             ok: true,
+            critical: false,
             message: "Using sandbox environment (dsk_test_)".into(),
             hint: None,
         });
@@ -244,6 +266,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         let sandbox_cert_ok = sandbox_cert_path.exists();
         checks.push(CheckItem {
             ok: sandbox_cert_ok,
+            critical: false,
             message: if sandbox_cert_ok {
                 "Sandbox API certificate found".into()
             } else {
@@ -261,12 +284,14 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
 
         checks.push(CheckItem {
             ok: false,
+            critical: false,
             message: "Production credentials not configured".into(),
             hint: Some("Run `pesaraja init --env production` to set up.".into()),
         });
     } else if is_production {
         checks.push(CheckItem {
             ok: true,
+            critical: false,
             message: "Production environment configured (dsk_live_)".into(),
             hint: None,
         });
@@ -275,6 +300,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         let cert_ok = production_cert_path.exists();
         checks.push(CheckItem {
             ok: cert_ok,
+            critical: false,
             message: if cert_ok {
                 "Production API certificate found".into()
             } else {
@@ -293,6 +319,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
 
     checks.push(CheckItem {
         ok: true,
+        critical: false,
         message: format!("Default callback URL: {DEFAULT_CALLBACK} (sandbox placeholder)"),
         hint: Some(
             "For production, expose a public HTTPS endpoint (e.g. ngrok) and pass --callback-url."
@@ -300,15 +327,7 @@ pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
         ),
     });
 
-    let critical_failed = !creds_exist
-        || !key_set
-        || checks.iter().any(|c| {
-            c.message.contains("OAuth failed")
-                || c.message.contains("Failed to decrypt")
-                || c.message.contains("invalid prefix")
-                || c.message.contains("Invalid SDK key")
-                || c.message.contains("Sandbox passkey mismatch")
-        });
+    let critical_failed = checks.iter().any(|c| c.critical && !c.ok);
 
     if json {
         let output = serde_json::json!({
