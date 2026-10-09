@@ -76,21 +76,15 @@ jobs:
         with:
           fetch-depth: 0
       - run: rustup component add clippy rustfmt
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.x
-          cache: npm
 
-      - name: Verify tag matches every package version
+      - name: Verify tag matches the crate versions
         env:
           TAG: ${{ github.ref_name }}
         run: |
           rust_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "daraja-rs") | .version')"
           cli_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "cli") | .version')"
-          npm_version="$(node -p "require('./daraja-ts/package.json').version")"
           test "$TAG" = "v${rust_version}"
           test "$TAG" = "v${cli_version}"
-          test "$TAG" = "v${npm_version}"
 
       - name: Verify Rust workspace
         run: |
@@ -110,13 +104,6 @@ jobs:
             echo "No previous release tag; skipping compatibility comparison."
           fi
 
-      - name: Verify TypeScript workspace
-        run: |
-          npm ci
-          npm run build
-          npm test
-          npm run lint:package -w @pesaraja/sdk
-
       - name: Build release assets
         env:
           TAG: ${{ github.ref_name }}
@@ -127,7 +114,6 @@ jobs:
 
           cargo package -p daraja-rs --locked
           cp "target/package/${crate_archive}" "release/${crate_archive}"
-          npm pack -w @pesaraja/sdk --pack-destination release
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
