@@ -5,13 +5,10 @@ changes should be small, testable, and explicit about failure semantics.
 
 ## Development setup
 
-Requirements are Rust 1.88.0 (pinned in rust-toolchain.toml) and Node.js 22 or 24.
+The only requirement is Rust 1.88.0, pinned in rust-toolchain.toml.
 
 ```bash
 cargo test --workspace --locked
-npm ci
-npm test
-npm run build
 ```
 
 Before opening a pull request, also run:
@@ -19,13 +16,11 @@ Before opening a pull request, also run:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-npm run lint:package -w @pesaraja/sdk
 ```
 
 Never use live Daraja credentials or initiate real money movement in tests.
 Use the local simulator and synthetic values. Money-moving operations must keep
-caller-provided idempotency keys, ambiguous outcome handling, and Rust/TypeScript
-behavior aligned.
+caller-provided idempotency keys and explicit handling of ambiguous outcomes.
 
 ## Pull requests
 

@@ -23,37 +23,6 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo package -p daraja-rs --locked
 
-  typescript:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [22.x, 24.x]
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
-      - if: matrix.node-version == '24.x'
-        run: npm pack -w @pesaraja/sdk --dry-run
-      - if: matrix.node-version == '24.x'
-        name: Smoke test packed SDK
-        run: |
-          smoke_dir="$(mktemp -d)"
-          package_dir="$(mktemp -d)"
-          npm pack -w @pesaraja/sdk --pack-destination "$package_dir"
-          package_archive="$package_dir/$(ls "$package_dir")"
-          npm install --prefix "$smoke_dir" "$package_archive"
-          (cd "$smoke_dir" && node --input-type=module --eval 'const sdk = await import("@pesaraja/sdk"); if (!sdk.Daraja || !sdk.DarajaError) process.exit(1);')
-      - if: matrix.node-version == '24.x'
-        run: npm audit --omit=dev --audit-level=high
-      - if: matrix.node-version == '24.x'
-        run: npm run lint:package -w @pesaraja/sdk
-
   dependency-policy:
     runs-on: ubuntu-latest
     steps:

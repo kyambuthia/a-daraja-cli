@@ -10,10 +10,9 @@ guarantees.
 | --- | --- |
 | `daraja-rs` | Rust Daraja client, request types, credentials, certificates, validation, idempotency, and callback parsing. |
 | `cli` | The `pesaraja` command-line interface and local sandbox callback receiver. |
-| `daraja-ts` | The ESM `@pesaraja/sdk` TypeScript client for Node.js 22 and newer. |
 
-The Rust and TypeScript SDKs intentionally share the same Daraja field names,
-credential blob format, validation contract, and environment prefixes.
+The crate and the CLI share the same Daraja field names, credential blob
+format, validation contract, and environment prefixes.
 
 ## CLI layout
 
@@ -67,8 +66,7 @@ reversal:QEJ78H8JKR
 
 The local persistence key is scoped by environment, shortcode, API endpoint,
 and caller key. Reusing a key with a different serialized request is rejected.
-Concurrent acquisition is atomic in Rust's SQLite store and protected by an
-atomic file/lock protocol in TypeScript.
+Concurrent acquisition is atomic in the SQLite store.
 
 An `unknown` state means a request may have reached Daraja but no response was
 obtained. Applications must reconcile that transaction before using a new key.
@@ -77,9 +75,8 @@ This is local duplicate protection, not a distributed exactly-once guarantee.
 Multiple hosts must use a shared application-level idempotency store or route a
 business operation through one coordinator.
 
-Rust applications can provide an `IdempotencyBackend` through
-`with_idempotency_backend`; TypeScript applications can provide an
-`IdempotencyBackend` in `DarajaClientOptions`. SQLite and the JSON file store
+Applications can provide an `IdempotencyBackend` through
+`with_idempotency_backend`. SQLite and the JSON file store
 remain local defaults, not distributed coordination.
 
 The Rust SDK also provides `PaymentStore`, a SQLite ledger with immutable
@@ -105,7 +102,6 @@ credentials.enc           AES-256-GCM credential blob
 profiles.json             non-secret profile metadata
 profiles/personal.enc     encrypted profile credentials
 idempotency.db            Rust idempotency state
-idempotency-ts.json        TypeScript idempotency state
 payments.db               CLI payment ledger and event history
 ```
 
@@ -116,8 +112,7 @@ Because the local key and encrypted blob are normally stored under the same OS
 account, this design protects against accidental disclosure and access by other
 users with correctly enforced permissions. It does not protect credentials
 after compromise of the same user account. Production deployments should pass
-the SDK key through a secret manager and may construct the TypeScript client
-directly with `Daraja.fromCredentials(...)`.
+the SDK key through a secret manager.
 
 ## Callback trust model
 
@@ -132,7 +127,7 @@ Callback payloads are untrusted input. The SDKs provide:
 - A fail-closed cryptographic verification placeholder.
 
 Applications that have an independently documented authenticator can supply it
-through `verify_callback_with` (Rust) or `verifyCallbackWith` (TypeScript).
+through `verify_callback_with`.
 This extension point does not define or imply a Safaricom signature algorithm;
 callbacks still require replay protection and authoritative reconciliation before
 fulfilment.

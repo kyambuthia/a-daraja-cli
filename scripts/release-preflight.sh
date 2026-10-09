@@ -5,7 +5,7 @@
 # publishing, or modifying code:
 #   - exactly one existing vX.Y.Z tag (annotated or lightweight);
 #   - clean working tree;
-#   - daraja-rs, cli, and @pesaraja/sdk versions all equal the tag;
+#   - daraja-rs and cli versions both equal the tag;
 #   - the tag resolves to HEAD.
 #
 # Usage:
@@ -102,17 +102,11 @@ cargo_pkg_version() {
     ' "$1"
 }
 
-npm_pkg_version() {
-    sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -n 1
-}
-
 daraja_version="$(cargo_pkg_version "daraja-rs/Cargo.toml")"
 cli_version="$(cargo_pkg_version "cli/Cargo.toml")"
-sdk_version="$(npm_pkg_version "daraja-ts/package.json")"
 
 [ -n "$daraja_version" ] || fail "could not read version from \"daraja-rs/Cargo.toml\""
 [ -n "$cli_version" ] || fail "could not read version from \"cli/Cargo.toml\""
-[ -n "$sdk_version" ] || fail "could not read version from \"daraja-ts/package.json\""
 
 if [ "$daraja_version" != "$version" ]; then
     fail "daraja-rs version \"$daraja_version\" does not match tag \"$tag\"; update \"daraja-rs/Cargo.toml\" to \"$version\""
@@ -120,10 +114,7 @@ fi
 if [ "$cli_version" != "$version" ]; then
     fail "cli version \"$cli_version\" does not match tag \"$tag\"; update \"cli/Cargo.toml\" to \"$version\""
 fi
-if [ "$sdk_version" != "$version" ]; then
-    fail "@pesaraja/sdk version \"$sdk_version\" does not match tag \"$tag\"; update \"daraja-ts/package.json\" to \"$version\""
-fi
-ok "versions match \"$tag\" (daraja-rs, cli, @pesaraja/sdk)"
+ok "versions match \"$tag\" (daraja-rs, cli)"
 
 tag_commit="$(git rev-list -n 1 "$tag")" \
     || fail "could not resolve tag \"$tag\" to a commit"
@@ -145,18 +136,6 @@ if [ "$verify" = "1" ]; then
     cargo test --workspace --locked
     ok "running: cargo package -p daraja-rs --locked"
     cargo package -p daraja-rs --locked
-    ok "running: npm ci"
-    npm ci
-    ok "running: npm run build"
-    npm run build
-    ok "running: npm test"
-    npm test
-    ok "running: npm run lint:package -w @pesaraja/sdk"
-    npm run lint:package -w @pesaraja/sdk
-    ok "running: npm pack -w @pesaraja/sdk --dry-run"
-    npm pack -w @pesaraja/sdk --dry-run
-    ok "running: npm audit --omit=dev --audit-level=high"
-    npm audit --omit=dev --audit-level=high
     ok "running: sh -n install.sh"
     sh -n install.sh
     ok "running: sh -n scripts/release-preflight.sh"

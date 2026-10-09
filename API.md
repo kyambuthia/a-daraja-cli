@@ -7,8 +7,7 @@ For SDK and CLI behavior, see the [usage guide](docs/usage.md) and
 
 ## A Daraja CLI Request Contract
 
-Before sending a request, the Rust and TypeScript SDKs enforce these shared
-boundaries where applicable:
+Before sending a request, the SDK enforces these boundaries where applicable:
 
 - Amounts must be positive whole KES values.
 - Kenyan mobile numbers must use a supported `01`, `07`, or `254` form and are
@@ -33,17 +32,16 @@ errors to avoid leaking credentials or complete payment payloads.
 
 A Daraja CLI sends an `Idempotency-Key` header and records request state locally.
 Callers must provide a stable business-operation key for STK prompts, B2C
-payments, and reversals. The CLI exposes `--idempotency-key`; TypeScript accepts
-`idempotencyKey`; Rust provides the corresponding
-`*_with_idempotency_key` functions.
+payments, and reversals. The CLI exposes `--idempotency-key` and the crate
+provides the corresponding `*_with_idempotency_key` functions.
 
 Keys are scoped by environment, shortcode, endpoint, and request fingerprint.
 Reusing a key with different parameters is rejected. A network failure can
 leave the operation in an `unknown` state; reconcile it before using a new key.
 The local stores prevent duplicate submission by one installation, but do not
 provide distributed exactly-once processing across multiple hosts.
-Rust exposes `IdempotencyBackend` and TypeScript accepts the same storage
-contract so applications can connect shared Redis, SQL, or equivalent stores.
+The crate exposes `IdempotencyBackend` so applications can connect shared
+Redis, SQL, or equivalent stores.
 
 The Rust SDK's `PaymentStore` provides a durable SQLite payment ledger for STK,
 B2C, and reversal operations, with provider conversation identifiers and
@@ -58,9 +56,9 @@ treated as success.
 ### Callback handling
 
 Callback bodies are untrusted input. A Daraja CLI validates their structure and
-domain fields and provides stable replay-deduplication keys. TypeScript can
-also match an STK callback to the expected checkout ID, merchant request ID,
-amount, and receipt.
+domain fields and provides stable replay-deduplication keys. An STK callback
+can be matched against the expected checkout ID, merchant request ID, amount,
+and receipt.
 
 These checks do not authenticate the sender. Cryptographic callback
 verification is not implemented and `verifyCallback`/`verify_callback` always

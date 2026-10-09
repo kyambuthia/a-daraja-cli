@@ -1,5 +1,4 @@
 /target
-node_modules/
 dist/
 
 # Local credentials and runtime caches — never commit
