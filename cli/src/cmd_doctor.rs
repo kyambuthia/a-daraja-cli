@@ -21,86 +21,13 @@ pub(crate) fn print_check(item: &CheckItem) {
 }
 
 pub(crate) async fn cmd_doctor(json: bool) -> Result<(), DarajaError> {
-    let mut checks: Vec<CheckItem> = Vec::new();
-
     let creds_path = credentials_path()?;
     let creds_exist = creds_path.exists();
-    checks.push(CheckItem {
-        ok: creds_exist,
-        critical: true,
-        message: if creds_exist {
-            format!("Credentials encrypted at rest ({})", creds_path.display())
-        } else {
-            "Credentials file not found".to_string()
-        },
-        hint: if creds_exist {
-            None
-        } else {
-            Some("Run `pesaraja init` to set up.".to_string())
-        },
-    });
-
-    if creds_exist {
-        let permissions_ok = profiles::ensure_private_permissions(&creds_path).is_ok();
-        checks.push(CheckItem {
-            ok: permissions_ok,
-            critical: false,
-            message: if permissions_ok {
-                "Credentials file permissions are private".into()
-            } else {
-                "Credentials file is accessible to other users".into()
-            },
-            hint: if permissions_ok {
-                None
-            } else {
-                Some(format!("Run `chmod 600 {}`.", creds_path.display()))
-            },
-        });
-    }
-
     let daraja_key = load_sdk_key().ok();
     let key_set = daraja_key.is_some();
     let key_from_env = std::env::var("DARAJA_KEY").ok().is_some();
 
-    checks.push(CheckItem {
-        ok: key_set,
-        critical: true,
-        message: if key_set {
-            if key_from_env {
-                "DARAJA_KEY is set (env var)".to_string()
-            } else {
-                format!("SDK key loaded from {}", key_path()?.display())
-            }
-        } else {
-            "DARAJA_KEY is not set".to_string()
-        },
-        hint: if key_set {
-            None
-        } else {
-            Some("Run `pesaraja init` to set up.".to_string())
-        },
-    });
-
-    if !key_from_env {
-        let path = key_path()?;
-        if path.exists() {
-            let permissions_ok = profiles::ensure_private_permissions(&path).is_ok();
-            checks.push(CheckItem {
-                ok: permissions_ok,
-                critical: false,
-                message: if permissions_ok {
-                    "SDK key file permissions are private".into()
-                } else {
-                    "SDK key file is accessible to other users".into()
-                },
-                hint: if permissions_ok {
-                    None
-                } else {
-                    Some(format!("Run `chmod 600 {}`.", path.display()))
-                },
-            });
-        }
-    }
+    let mut checks = stored_secret_checks(&creds_path, creds_exist, key_set, key_from_env)?;
 
     let is_sandbox = daraja_key
         .as_deref()
@@ -363,4 +290,90 @@ fn report(checks: &[CheckItem], json: bool) -> Result<(), DarajaError> {
         println!();
     }
     Ok(())
+}
+
+/// Checks covering the two secrets that live on disk: the encrypted
+/// credentials file and the SDK key, including whether either is readable
+/// by other users on the machine.
+fn stored_secret_checks(
+    creds_path: &std::path::Path,
+    creds_exist: bool,
+    key_set: bool,
+    key_from_env: bool,
+) -> Result<Vec<CheckItem>, DarajaError> {
+    let mut checks: Vec<CheckItem> = Vec::new();
+
+    checks.push(CheckItem {
+        ok: creds_exist,
+        critical: true,
+        message: if creds_exist {
+            format!("Credentials encrypted at rest ({})", creds_path.display())
+        } else {
+            "Credentials file not found".to_string()
+        },
+        hint: if creds_exist {
+            None
+        } else {
+            Some("Run `pesaraja init` to set up.".to_string())
+        },
+    });
+
+    if creds_exist {
+        let permissions_ok = profiles::ensure_private_permissions(creds_path).is_ok();
+        checks.push(CheckItem {
+            ok: permissions_ok,
+            critical: false,
+            message: if permissions_ok {
+                "Credentials file permissions are private".into()
+            } else {
+                "Credentials file is accessible to other users".into()
+            },
+            hint: if permissions_ok {
+                None
+            } else {
+                Some(format!("Run `chmod 600 {}`.", creds_path.display()))
+            },
+        });
+    }
+
+    checks.push(CheckItem {
+        ok: key_set,
+        critical: true,
+        message: if key_set {
+            if key_from_env {
+                "DARAJA_KEY is set (env var)".to_string()
+            } else {
+                format!("SDK key loaded from {}", key_path()?.display())
+            }
+        } else {
+            "DARAJA_KEY is not set".to_string()
+        },
+        hint: if key_set {
+            None
+        } else {
+            Some("Run `pesaraja init` to set up.".to_string())
+        },
+    });
+
+    if !key_from_env {
+        let path = key_path()?;
+        if path.exists() {
+            let permissions_ok = profiles::ensure_private_permissions(&path).is_ok();
+            checks.push(CheckItem {
+                ok: permissions_ok,
+                critical: false,
+                message: if permissions_ok {
+                    "SDK key file permissions are private".into()
+                } else {
+                    "SDK key file is accessible to other users".into()
+                },
+                hint: if permissions_ok {
+                    None
+                } else {
+                    Some(format!("Run `chmod 600 {}`.", path.display()))
+                },
+            });
+        }
+    }
+    Ok(checks)
 }
