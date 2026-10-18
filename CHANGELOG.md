@@ -15,14 +15,19 @@ Notable changes to A Daraja CLI are recorded here. This project follows
 
 - Money-moving SDK calls require caller-provided idempotency keys.
 - Ambiguous provider outcomes and local persistence failures fail closed.
-- Node.js support starts at Node 22.
 - Configuration storage follows platform conventions and supports
   `DARAJA_CONFIG_DIR`.
 - The `pesaraja` CLI monolith (`cli/src/main.rs`) is split into per-command
   modules (`args`, `creds`, `common`, `cmd_*`) with no behavior change.
 
+### Removed
+
+- The TypeScript SDK. The repository now ships only the `pesaraja` CLI and
+  the `daraja-rs` crate.
+
 ### Security
 
 - Production endpoint overrides are rejected.
-- SDK credentials are no longer enumerable TypeScript client state.
 - Sandbox certificate downloads are pinned and checksum/X.509 validated.
+- Updated `rustls` and `quinn-proto` to clear RUSTSEC-2026-0338 to 0342 and
+  RUSTSEC-2026-0346 to 0349.

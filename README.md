@@ -1,5 +1,9 @@
 # A Daraja CLI
 
+[![CI](https://github.com/kyambuthia/a-daraja-cli/actions/workflows/ci.yml/badge.svg?branch=trunk)](https://github.com/kyambuthia/a-daraja-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)
+
 > **Alpha software:** do not use for production money movement yet. Callback
 > signature verification is not currently implemented.
 
@@ -49,6 +53,12 @@ cargo build --release -p cli
 cp target/release/pesaraja ~/.local/bin/
 ```
 
+Or install straight from Git with Cargo:
+
+```bash
+cargo install --git https://github.com/kyambuthia/a-daraja-cli --locked cli
+```
+
 Or use `./install.sh` with `PESARAJA_VERSION` when a GitHub release is
 available. Prebuilt binaries must pass the release SHA-256 checksum; otherwise
 the installer builds the selected tag from source.
@@ -71,7 +81,7 @@ DARAJA_KEY=dsk_test_...
 
 | Package | What |
 |---------|------|
-| `cli/` | `pesaraja` binary — init, prompt, receive, send, doctor |
+| `cli/` | `pesaraja` binary: setup, payments, callbacks, simulator, diagnostics |
 | `daraja-rs/` | Rust library |
 
 The same `DARAJA_KEY` works for both.
@@ -109,16 +119,23 @@ authenticate its sender; reconcile payment state before fulfilling an order.
 | `pesaraja init` | Interactive setup wizard |
 | `pesaraja setup <type>` | Add a paybill, till, or pochi profile |
 | `pesaraja use <profile>` | Select the active profile |
+| `pesaraja config` | Show current configuration (never prints secrets) |
+| `pesaraja export-key` | Print the SDK key for CI/CD |
 | `pesaraja prompt` | STK Push (alias: `stk`) |
-| `pesaraja prompt-status` | Check STK result |
+| `pesaraja prompt-status` | Check STK result (alias: `stk-query`) |
+| `pesaraja payments` | List, inspect, and reconcile local payment records |
 | `pesaraja receive` | Local C2B callback server (sandbox) |
 | `pesaraja simulate` | Fake incoming PayBill payment (sandbox) |
-| `pesaraja send` | B2C payment |
-| `pesaraja query` | Transaction status |
-| `pesaraja balance` | Account balance |
-| `pesaraja refund` | Transaction reversal |
+| `pesaraja simulator` | Local deterministic Daraja-compatible simulator |
 | `pesaraja register` | Register C2B URLs |
+| `pesaraja webhook` | Send a test callback to your webhook server |
+| `pesaraja send` | B2C payment |
+| `pesaraja query` | Transaction status (alias: `status`) |
+| `pesaraja balance` | Account balance |
+| `pesaraja refund` | Transaction reversal (alias: `reverse`) |
 | `pesaraja doctor` | Check config and certs |
+
+The global `--json` flag gives stable machine-readable output and errors on commands that support it.
 
 ## License
 

@@ -399,7 +399,7 @@ mod tests {
                 name: "personal".into(),
                 profile_type: ProfileType::Personal,
                 environment: Environment::Sandbox,
-                merchant_number: "254743121299".into(),
+                merchant_number: "254700000001".into(),
                 credentials_path: "/tmp/personal.enc".into(),
                 initiator_configured: false,
             }],
@@ -408,7 +408,7 @@ mod tests {
         let loaded = load_registry().expect("load registry");
         assert_eq!(loaded.active_profile, Some("personal".into()));
         assert_eq!(loaded.profiles.len(), 1);
-        assert_eq!(loaded.profiles[0].merchant_number, "254743121299");
+        assert_eq!(loaded.profiles[0].merchant_number, "254700000001");
     }
 
     #[test]
@@ -496,7 +496,7 @@ mod tests {
             consumer_key: Zeroizing::new("ck".into()),
             consumer_secret: Zeroizing::new("cs".into()),
             passkey: Zeroizing::new("pk".into()),
-            shortcode: "254743121299".into(),
+            shortcode: "254700000001".into(),
             initiator_name: Some(Zeroizing::new("apitest".into())),
             initiator_password: Some(Zeroizing::new("pass".into())),
         };
@@ -512,7 +512,7 @@ mod tests {
         let profile = &registry.profiles[0];
         assert_eq!(profile.name, "personal");
         assert_eq!(profile.profile_type.as_str(), "personal");
-        assert_eq!(profile.merchant_number, "254743121299");
+        assert_eq!(profile.merchant_number, "254700000001");
     }
 
     #[test]
@@ -529,7 +529,7 @@ mod tests {
             consumer_key: Zeroizing::new("ck".into()),
             consumer_secret: Zeroizing::new("cs".into()),
             passkey: Zeroizing::new("pk".into()),
-            shortcode: "254743121299".into(),
+            shortcode: "254700000001".into(),
             initiator_name: Some(Zeroizing::new("apitest".into())),
             initiator_password: Some(Zeroizing::new("pass".into())),
         };
@@ -537,7 +537,7 @@ mod tests {
             name: "personal".into(),
             profile_type: ProfileType::Personal,
             environment: Environment::Sandbox,
-            merchant_number: "254743121299".into(),
+            merchant_number: "254700000001".into(),
             credentials_path: config_dir
                 .join("profiles/personal.enc")
                 .display()
@@ -550,7 +550,7 @@ mod tests {
             .expect("load active context")
             .expect("active context");
         assert_eq!(active.name, "personal");
-        assert_eq!(loaded.shortcode, "254743121299");
+        assert_eq!(loaded.shortcode, "254700000001");
         assert_eq!(loaded.consumer_key.as_str(), "ck");
     }
 }
