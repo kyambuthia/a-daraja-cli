@@ -39,7 +39,7 @@ provider events without relying on source IP alone.
 - Stabilize the public Rust API with semver compatibility checks.
 - Publish an upgrade and deprecation policy.
 - Complete accessibility and terminal UX review for interactive commands.
-- Establish supported Rust and Node release lines and maintenance windows.
+- Establish a minimum supported Rust version policy and maintenance windows.
 
 Items enter a milestone only with a user problem, safety analysis, and focused
 verification plan. See [CONTRIBUTING.md](CONTRIBUTING.md).

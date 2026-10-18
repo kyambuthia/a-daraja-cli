@@ -80,14 +80,14 @@ mod tests {
         assert_eq!(active.merchant_number, "174379");
         assert_eq!(loaded.shortcode, "174379");
 
-        let updated = test_credentials("254743121299");
+        let updated = test_credentials("254700000001");
         persist_personal_configuration("sandbox", &updated, &sdk_key).expect("updated persist");
 
         let (active, loaded) = load_active_profile_context()
             .expect("reload active context")
             .expect("active profile after update");
-        assert_eq!(active.merchant_number, "254743121299");
-        assert_eq!(loaded.shortcode, "254743121299");
+        assert_eq!(active.merchant_number, "254700000001");
+        assert_eq!(loaded.shortcode, "254700000001");
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
         let opts = InitOptions {
             env: Some(InitEnvironment::Sandbox),
             consumer_key: Some("ck".into()),
-            shortcode: Some("0743121299".into()),
+            shortcode: Some("0700000001".into()),
             initiator_name: None,
             non_interactive: true,
         };
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn validate_shortcode_rejects_msisdn_variants() {
         let _guard = crate::TEST_ENV_LOCK.lock().expect("test env lock");
-        for candidate in ["0743121299", "0112345678", "254743121299", "+254743121299"] {
+        for candidate in ["0700000001", "0112345678", "254700000001", "+254700000001"] {
             let err = match validate_shortcode(candidate.to_string()) {
                 Ok(_) => panic!("mobile numbers should be rejected"),
                 Err(err) => err,

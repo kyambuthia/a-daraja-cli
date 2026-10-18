@@ -333,17 +333,17 @@ mod tests {
 
     #[test]
     fn normalize_phone_accepts_plus_prefix() {
-        assert_eq!(normalize_phone("+254743121299"), "254743121299");
+        assert_eq!(normalize_phone("+254700000001"), "254700000001");
     }
 
     #[test]
     fn normalize_phone_accepts_zero_prefix() {
-        assert_eq!(normalize_phone("0743121299"), "254743121299");
+        assert_eq!(normalize_phone("0700000001"), "254700000001");
     }
 
     #[test]
     fn normalize_phone_preserves_international_format() {
-        assert_eq!(normalize_phone("254743121299"), "254743121299");
+        assert_eq!(normalize_phone("254700000001"), "254700000001");
     }
 
     #[test]
