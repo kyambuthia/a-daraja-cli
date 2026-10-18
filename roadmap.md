@@ -7,7 +7,6 @@ roadmap describes remaining work; it does not describe shipped behavior.
 ## Public preview — 0.1
 
 - Keep CI, package linting, dependency policy, and simulator integration green.
-- Enable GitHub private vulnerability reporting and Discussions.
 - Publish signed/checksummed release artifacts and verify install instructions.
 - Document the known callback-authentication limitation prominently.
 

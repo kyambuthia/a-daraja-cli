@@ -9,8 +9,7 @@ on the `trunk` branch; no older release line is supported.
 
 Please report suspected vulnerabilities with a
 [private GitHub security advisory](https://github.com/kyambuthia/a-daraja-cli/security/advisories/new)
-rather than opening a public issue. Repository maintainers must enable GitHub's
-private vulnerability reporting before launch. Include the affected
+rather than opening a public issue. Include the affected
 version, a minimal reproduction, and the potential impact. Do not include
 Daraja credentials, access tokens, private keys, payment data, or other
 sensitive information in the report.
